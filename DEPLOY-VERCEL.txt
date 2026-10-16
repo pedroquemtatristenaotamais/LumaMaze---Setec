@@ -1,0 +1,35 @@
+PUBLICAR ÚLTIMA CHAMA NO VERCEL
+
+Este jogo é um site estático (HTML, CSS, JavaScript e imagens locais). Não precisa de banco de dados nem de comando de build.
+
+OPÇÃO A — PUBLICAR DIRETO DA PASTA COM O VERCEL CLI
+1. Extraia o ZIP.
+2. Instale o Node.js se ainda não tiver: https://nodejs.org/
+3. Abra um terminal na pasta luma-maze (a pasta onde ficam index.html, style.css e game.js).
+4. Execute:
+   npm install -g vercel
+5. Faça login:
+   vercel login
+6. Publique uma versão de teste:
+   vercel
+   Responda às perguntas para criar/vincular o projeto. Use a pasta atual como raiz.
+7. Quando o endereço de teste funcionar, publique em produção:
+   vercel --prod
+8. O terminal mostrará o endereço público do site.
+
+OPÇÃO B — PUBLICAR USANDO GITHUB
+1. Extraia o ZIP.
+2. Crie um repositório no GitHub.
+3. Envie o CONTEÚDO da pasta luma-maze para a raiz do repositório (index.html deve ficar logo na raiz, não dentro de uma subpasta).
+4. No Vercel, escolha Add New → Project e importe o repositório.
+5. Nas configurações de build, escolha Framework Preset: Other.
+   - Build Command: deixe vazio.
+   - Output Directory: .
+   - Install Command: pode ficar vazio.
+6. Clique em Deploy. O Vercel fornecerá um endereço público.
+
+IMPORTANTE
+- Aponte a raiz do projeto para a pasta que contém index.html, style.css, game.js, js/ e assets/.
+- O jogo usa módulos JavaScript; o Vercel os serve normalmente por HTTPS.
+- O salvamento da campanha e as configurações ficam no navegador do visitante. O progresso local não é compartilhado entre dispositivos.
+- Não é necessário adicionar chaves secretas ou variáveis de ambiente.

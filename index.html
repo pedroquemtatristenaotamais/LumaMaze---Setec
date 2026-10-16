@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090705" />
+  <title>Última Chama — O Labirinto Macabro</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <section class="title-screen" id="titleScreen" role="dialog" aria-modal="true" aria-labelledby="titleGameName">
+    <div class="title-screen-glow title-glow-left" aria-hidden="true"></div>
+    <div class="title-screen-glow title-glow-right" aria-hidden="true"></div>
+    <div class="title-screen-embers" aria-hidden="true">
+      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+    </div>
+    <div class="title-frame" aria-hidden="true"></div>
+    <div class="title-content">
+      <p class="title-overline"><span></span> UMA AVENTURA NAS CATACUMBAS <span></span></p>
+      <div class="title-logo-wrap">
+        <div class="title-logo-halo"></div>
+        <img class="title-school-logo" src="assets/colegio-logo.png" alt="Logo do Colégio Estadual Barbosa Ferraz" />
+      </div>
+      <p class="title-school-caption">COLÉGIO ESTADUAL BARBOSA FERRAZ</p>
+      <h1 id="titleGameName" class="title-game-name">ÚLTIMA <span>CHAMA</span></h1>
+      <p class="title-game-subtitle">O LABIRINTO MACABRO</p>
+      <div class="title-mark-divider"><span></span><strong>2 DS</strong><span></span></div>
+      <p class="title-author">UM JOGO DE <strong>PEDRO</strong></p>
+      <button id="titleStartButton" class="title-start-button" type="button">INICIAR AVENTURA <span>↗</span></button>
+      <button id="titleContinueButton" class="title-continue-button hidden" type="button">CONTINUAR CAMPANHA <span>↗</span></button>
+      <p class="title-lower-hint"><span class="title-flame-dot"></span> A CHAMA É SUA ÚNICA COMPANHIA</p>
+    </div>
+    <div class="title-corner-label title-corner-left">CAPÍTULO I</div>
+    <div class="title-corner-label title-corner-right">A CRIPTA</div>
+  </section>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Última Chama — início">
+        <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
+        <span>ÚLTIMA<span class="brand-light">CHAMA</span></span>
+      </a>
+      <div class="topbar-right">
+        <span class="status-dot"></span>
+        <span class="status-text">A TOCHA AGUARDA</span>
+      </div>
+    </header>
+
+    <section class="intro-row">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span> UMA AVENTURA NAS CATACUMBAS</p>
+        <h1>Encontre a <span>saída.</span></h1>
+        <p class="intro-copy">Explore ruínas cobertas de musgo, enfrente esqueletos e sobreviva à escuridão. A cada passagem, o labirinto fica maior.</p>
+      </div>
+      <div class="level-pill"><span class="level-star">✦</span><span id="levelLabel">CRIPTA · 01/08</span></div>
+    </section>
+
+    <section class="game-layout" aria-label="Jogo de labirinto">
+      <div class="game-card">
+        <div class="game-toolbar">
+          <div class="toolbar-label"><span class="live-dot"></span> <span id="gameStatus">AGUARDANDO INÍCIO</span> <span class="stage-counter" id="stageCounter">FASE 01 / 08</span></div>
+          <div class="toolbar-actions">
+            <button id="soundButton" class="icon-button" type="button" aria-label="Ativar ou desativar sons" title="Som ligado">♫</button>
+            <button id="restartButton" class="icon-button" type="button" aria-label="Reiniciar partida" title="Reiniciar">↻</button>
+            <button id="pauseButton" class="icon-button" type="button" aria-label="Pausar jogo" title="Pausar" disabled>Ⅱ</button>
+          </div>
+        </div>
+
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="mazeCanvas" aria-label="Labirinto macabro em pixel art. Explore as catacumbas, encontre armas e use tiros que ricocheteiam nas paredes." role="img"></canvas>
+          <div class="canvas-vignette"></div>
+          <div class="minimal-hud" aria-label="Estado do personagem">
+            <div class="hud-vitals">
+              <div class="hud-health-head"><span>VIDA</span><strong id="hudHealthValue">100%</strong></div>
+              <div class="hud-health-track"><div id="hudHealthBar"></div></div>
+            </div>
+            <div class="hud-ammo" aria-live="polite">
+              <span id="hudWeaponName">TOCHA</span>
+              <strong id="hudAmmoCount">— / —</strong>
+            </div>
+          </div>
+
+          <div class="overlay" id="startOverlay">
+            <div class="overlay-orb"><span>♨</span></div>
+            <p class="overlay-kicker">AS CATACUMBAS ESTÃO VIVAS</p>
+            <h2>Não confie<br /><em>na escuridão.</em></h2>
+            <p class="overlay-description">Encontre armas perdidas. Use ricochetes para atingir o que espreita além das paredes.</p>
+            <label class="difficulty-label" for="difficultySelect">ESCOLHA SEU PESADELO</label>
+            <div class="select-wrap">
+              <select id="difficultySelect">
+                <option value="easy">Catacumbas · curto</option>
+                <option value="normal" selected>Cripta · profundo</option>
+                <option value="hard">Abismo · enorme</option>
+              </select>
+              <span>⌄</span>
+            </div>
+            <button id="startButton" class="primary-button" type="button">Entrar no labirinto <span>↗</span></button>
+            
+          </div>
+
+          <div class="overlay overlay-small hidden" id="pauseOverlay">
+            <div class="pause-symbol">Ⅱ</div>
+            <p class="overlay-kicker">PAUSA</p>
+            <h2>Respire.<br /><em>Recalcule.</em></h2>
+            <button id="resumeButton" class="primary-button" type="button">Continuar <span>→</span></button>
+            <p class="keyboard-hint">Pressione <kbd>ESPAÇO</kbd> para voltar</p>
+          </div>
+
+          <div class="overlay overlay-small hidden" id="winOverlay">
+            <div class="win-symbol">✦</div>
+            <p class="overlay-kicker">VOCÊ SOBREVIVEU</p>
+            <h2 id="winHeadline">Você escapou<br /><em>da escuridão.</em></h2>
+            <p class="overlay-description" id="winCopy">A saída foi encontrada. A chama ainda vive.</p>
+            <div class="win-stats"><div><span>TEMPO</span><strong id="finalTime">00:00</strong></div><div><span>BRASAS</span><strong id="finalCoins">0/0</strong></div></div>
+            <button id="nextButton" class="primary-button" type="button">Entrar na próxima fase <span>→</span></button>
+          </div>
+
+          <div class="overlay overlay-small hidden" id="deadOverlay">
+            <div class="death-symbol">✕</div>
+            <p class="overlay-kicker">A CHAMA SE APAGOU</p>
+            <h2>Os mortos<br /><em>te encontraram.</em></h2>
+            <p class="overlay-description">O último marco está salvo entre fases. Tente outra rota e proteja a chama.</p>
+            <button id="retryButton" class="primary-button" type="button">Tentar novamente <span>↻</span></button>
+          </div>
+
+          <div class="overlay overlay-small hidden settings-overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <p class="overlay-kicker">AJUSTES DA EXPLORAÇÃO</p>
+            <h2 id="settingsTitle">Ajuste a <em>chama.</em></h2>
+            <label class="setting-check"><input id="soundSetting" type="checkbox" checked /> Sons e ambiente ativados</label>
+            <label class="setting-row"><span>Volume dos sons</span><input id="volumeSetting" type="range" min="0" max="1" step="0.05" value="0.65" /></label>
+            <label class="setting-row"><span>Brilho do cenário</span><input id="brightnessSetting" type="range" min="0" max="1" step="0.05" value="0.5" /></label>
+            <label class="setting-check"><input id="motionSetting" type="checkbox" /> Reduzir efeitos animados</label>
+            <button id="closeSettingsButton" class="primary-button" type="button">Voltar ao labirinto <span>→</span></button>
+            <p class="keyboard-hint">Tecla <kbd>O</kbd> abre os ajustes · <kbd>M</kbd> mostra o mapa</p>
+          </div>
+        </div>
+
+        <div class="weapon-dock" aria-label="Armas disponíveis">
+          <div class="weapon-info"><span class="weapon-kicker">ARMA EQUIPADA</span><strong id="weaponName">PISTOLA</strong><span class="ammo-label">MUNIÇÃO <b id="ammoCount">12 / 72</b></span></div>
+          <div class="weapon-slots">
+            <button type="button" class="weapon-slot active" data-weapon="pistol" aria-pressed="true"><kbd>1</kbd><span class="weapon-glyph pistol-glyph">▰</span><span><b>PISTOLA</b><small>Precisão</small></span></button>
+            <button type="button" class="weapon-slot" data-weapon="shotgun" aria-pressed="false"><kbd>2</kbd><span class="weapon-glyph shotgun-glyph">▰</span><span><b>SHOTGUN</b><small>Curta distância</small></span></button>
+            <button type="button" class="weapon-slot" data-weapon="ak" aria-pressed="false"><kbd>3</kbd><span class="weapon-glyph ak-glyph">▰</span><span><b>AK-47</b><small>Disparo rápido</small></span></button>
+          </div>
+        </div>
+
+        <div class="game-footer">
+          <div class="legend"><span class="legend-player"></span> Viajante <span class="legend-gap"></span><span class="legend-crystal">✦</span> Brasa <span class="legend-gap"></span><span class="legend-exit">▣</span> Saída</div>
+          <div class="footer-tip"><span>✧</span> Proteja a chama</div>
+        </div>
+      </div>
+
+      <aside class="sidebar">
+        <div class="stats-card">
+          <div class="section-heading"><span>SINAIS DA EXPLORAÇÃO</span><span class="heading-icon">⌁</span></div>
+          <div class="timer-block">
+            <span class="stat-label">TEMPO NA ESCURIDÃO</span>
+            <div class="timer-value" id="timerValue">00<span>:</span>00</div>
+            <div class="timer-track"><div id="timerBar"></div></div>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-grid">
+            <div class="mini-stat"><div class="mini-icon coin-icon">✦</div><span class="stat-label">BRASAS</span><strong id="coinCount">0 <small>/ 0</small></strong></div>
+            <div class="mini-stat"><div class="mini-icon steps-icon">⌁</div><span class="stat-label">DISTÂNCIA</span><strong id="stepCount">0</strong></div>
+          </div>
+          <div class="health-block"><div class="health-line"><span class="stat-label">VIDA</span><strong id="healthValue">100%</strong></div><div class="health-track"><div id="healthBar"></div></div></div>
+          <div class="combat-line"><span>ESQUELETOS ELIMINADOS <b id="killCount">0</b></span><span>ATIVOS <b id="enemyCount">0</b></span></div>
+        </div>
+
+        <div class="controls-card">
+          <div class="section-heading"><span>CONTROLES</span><span class="heading-icon">⌨</span></div>
+          <div class="key-control-row">
+            <div class="key-cluster"><kbd>W</kbd><div><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div></div>
+            <p><strong>Movimentar</strong><span>Explore o labirinto</span></p>
+          </div>
+          <div class="key-control-row">
+            <div class="key-cluster single"><kbd>MOUSE</kbd></div>
+            <p><strong>Mirar e atirar</strong><span>Mouse ou tecla F</span></p>
+          </div>
+          <div class="key-control-row">
+            <div class="key-cluster single"><kbd>1 2 3</kbd></div>
+            <p><strong>Trocar arma</strong><span>Pistola, shotgun ou AK-47</span></p>
+          </div>
+          <div class="key-control-row">
+            <div class="key-cluster single"><kbd>R</kbd></div>
+            <p><strong>Recarregar</strong><span>Abasteça seu carregador</span></p>
+          </div>
+          <div class="key-control-row">
+            <div class="key-cluster single"><kbd>ESPAÇO</kbd></div>
+            <p><strong>Pausar</strong><span>Interrompa a exploração</span></p>
+          </div>
+        </div>
+
+        <div class="quote-card">
+          <div class="quote-mark">“</div>
+          <p>As paredes respiram musgo. Os esqueletos avisam antes de golpear — esquive, mire e não desperdice munição.</p>
+          <div class="quote-bottom"><span></span> NÃO APAGUE A CHAMA</div>
+        </div>
+      </aside>
+    </section>
+
+    <footer class="page-footer"><span>© 2026 ÚLTIMA CHAMA</span><span>ENCONTRE A PORTA. ECONOMIZE MUNIÇÃO. <b>✦</b></span></footer>
+  </main>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

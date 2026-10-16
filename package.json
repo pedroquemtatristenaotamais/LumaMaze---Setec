@@ -1,0 +1,7 @@
+{
+  "name": "ultima-chama",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Jogo 2D de terror em pixel art"
+}
