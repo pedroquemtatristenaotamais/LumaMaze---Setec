@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { makeMaze, widenMaze } from '../maze-generator.js';
-import { DIFFICULTIES } from '../config.js';
+import * as config from '../config.js';
 import { createEnemy, chooseEnemyType } from '../enemy-types.js';
 
 const navigation = await import('../pathfinding.js').catch(() => ({}));
+const combat = await import('../combat-difficulty.js').catch(() => ({}));
+const { DIFFICULTIES } = config;
 
 function flood(grid, startX = 1, startY = 1) {
   const seen = new Set([`${startX},${startY}`]);
@@ -120,14 +122,15 @@ test('switching guns cancels a pending reload before it can fill the wrong magaz
   assert.notEqual(result.status, 'RECARREGANDO');
 });
 
-async function enemyScenario(grid, enemy, player, frames = 1) {
+async function enemyScenario(grid, enemy, player, frames = 1, mode = 'normal', initialShots = 0) {
   const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
   const functions = ['walkableCell', 'blockedAt', 'moveEntity', 'hasLineOfSight', 'updateEnemies'];
   if (source.includes('  function findPathStep(')) functions.push('findPathStep');
-  const run = new Function('maze', 'enemy', 'player', 'createDistanceField', 'frames', `
-    const rows=maze.length, cols=maze[0].length, enemies=[enemy], secretDoors=[], hostileBullets=[];
+  const run = new Function('maze', 'enemy', 'player', 'createDistanceField', 'frames', 'profiles', 'mode', 'initialShots', `
+    const rows=maze.length, cols=maze[0].length, enemies=[enemy], secretDoors=[], hostileBullets=Array.from({length:initialShots},()=>({}));
     const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by), clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
     const cellKey=(x,y)=>x+','+y, tone=()=>{}, stage=3, MAX_HOSTILE_BULLETS=128;
+    const COMBAT_DIFFICULTIES=profiles,combatDifficulty=mode,randInt=max=>Math.floor(Math.random()*max);
     let damageCooldown=0, damage=0, navigationDirty=true, lastPathUpdate=-Infinity;
     const damagePlayer=amount=>{damage+=amount; damageCooldown=.72;};
     const navigation=createDistanceField(cols,rows,walkableCell);
@@ -135,7 +138,7 @@ async function enemyScenario(grid, enemy, player, frames = 1) {
     for(let i=0;i<frames;i++) updateEnemies(.02,5000+i*20);
     return {enemy,hostileBullets,damage};
   `);
-  return run(grid.map(row => [...row].map(Number)), enemy, player, navigation.createDistanceField, frames);
+  return run(grid.map(row => [...row].map(Number)), enemy, player, navigation.createDistanceField, frames, config.COMBAT_DIFFICULTIES, mode, initialShots);
 }
 
 test('an archer follows a corridor when a wall hides a player inside shooting distance', async () => {
@@ -174,9 +177,9 @@ test('melee windups cannot damage a player through a diagonal wall corner', asyn
 test('regional encounters appear from the first stage and keep a safe start and weapon radius', async () => {
   const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
   const { isBossStage } = await import('../enemy-types.js');
-  const run = new Function('maze', 'stage', 'createEnemy', 'chooseEnemyType', 'isBossStage', `
+  const run = new Function('maze', 'stage', 'createEnemy', 'chooseEnemyType', 'isBossStage', 'getEnemyCount', `
     const cols=maze[0].length, rows=maze.length, player={x:8.5,y:8.5}, exit={x:cols-9,y:rows-9};
-    const difficulty='normal',secretRooms=[],MAX_ENEMIES=64;
+    const difficulty='normal',combatDifficulty='normal',secretRooms=[],MAX_ENEMIES=96;
     const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by),randInt=max=>Math.floor(Math.random()*max);
     let enemies=[],weaponPickups=[];
     ${['openCells', 'placeWeaponPickups', 'spawnEnemies'].map(name => functionSource(source, name)).join('\n')}
@@ -187,8 +190,8 @@ test('regional encounters appear from the first stage and keep a safe start and 
     const built = widenMaze(makeMaze(49, 37, stage, 99));
     const maze = Array.from({length: built.length + 12}, () => Array(built[0].length + 12).fill(1));
     for (let y = 0; y < built.length; y++) for (let x = 0; x < built[0].length; x++) maze[y + 6][x + 6] = built[y][x];
-    const { enemies, weaponPickups } = run(maze, stage, createEnemy, chooseEnemyType, isBossStage);
-    assert.ok(enemies.length > 10 && enemies.length <= 64);
+    const { enemies, weaponPickups } = run(maze, stage, createEnemy, chooseEnemyType, isBossStage, combat.getEnemyCount);
+    assert.ok(enemies.length > 10 && enemies.length <= 96);
     assert.ok(enemies.some(enemy => enemy.type === 'emberling'), 'a chapel encounter must not depend on rare random placement');
     if (stage >= 2) assert.ok(enemies.some(enemy => enemy.type === 'wraith'));
     for (const enemy of enemies) {
@@ -196,4 +199,139 @@ test('regional encounters appear from the first stage and keep a safe start and 
       assert.ok(weaponPickups.every(item => Math.hypot(enemy.x - item.x - .5, enemy.y - item.y - .5) > 2.6));
     }
   }
+});
+
+test('player speed rises only ten percent, with no diagonal speed bonus', async () => {
+  const { PLAYER_MOVE_SPEED } = await import('../config.js');
+  assert.equal(PLAYER_MOVE_SPEED, 4.4);
+  const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
+  const run = new Function('keys', 'PLAYER_MOVE_SPEED', `
+    const keyState=new Set(keys), player={x:4.5,y:4.5}, exit={x:99,y:99};
+    const maze=Array.from({length:25},()=>Array(25).fill(0)), rows=25, cols=25;
+    const secretDoors=[], coins=[], visitedAreas=new Set();
+    const cellKey=(x,y)=>x+','+y, dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+    const updateHUD=()=>{}, collectNearbyCoins=()=>{}, collectWeaponPickups=()=>{}, collectLootPickups=()=>{};
+    let stepDistance=0, steps=0, lastPlayerCell='4,4', navigationDirty=false;
+    ${['walkableCell','blockedAt','moveEntity','updatePlayer'].map(name=>functionSource(source,name)).join('\n')}
+    for(let frame=0;frame<100;frame++)updatePlayer(.01);
+    return Math.hypot(player.x-4.5,player.y-4.5);
+  `);
+  for (const keys of [['d'], ['d','s']]) assert.ok(Math.abs(run(keys, PLAYER_MOVE_SPEED) - 4.4) < 1e-9);
+});
+
+test('camera changes preserve the three map sizes and stage growth', () => {
+  assert.deepEqual(Object.entries(DIFFICULTIES).map(([id, size])=>[id,size.cols,size.rows]), [
+    ['easy',29,21], ['normal',39,29], ['hard',49,37]
+  ]);
+  for(const [id, expected] of [['easy',[126,82]],['normal',[146,98]],['hard',[166,114]]]) {
+    const size=DIFFICULTIES[id], wide=widenMaze(makeMaze(size.cols+28,size.rows+14,8,77));
+    assert.deepEqual([wide[0].length+12,wide.length+12],expected);
+  }
+});
+
+test('combat difficulty resolves independently of map size, including old checkpoints', () => {
+  assert.equal(typeof combat.resolveCombatDifficulty, 'function');
+  assert.equal(combat.resolveCombatDifficulty(null, 'hard', false), 'hard');
+  assert.equal(combat.resolveCombatDifficulty({ difficulty: 'hard', combatDifficulty: 'easy' }, 'normal', true), 'easy');
+  assert.equal(combat.resolveCombatDifficulty({ difficulty: 'easy' }, 'hard', true), 'normal');
+  assert.equal(combat.resolveCombatDifficulty({ combatDifficulty: 'invalid' }, 'hard', true), 'normal');
+  assert.equal(combat.resolveCombatDifficulty(null, 'invalid', false), 'normal');
+});
+
+test('combat profiles increase enemy pressure without changing the map dimensions or player speed', () => {
+  assert.equal(typeof combat.getEnemyCount, 'function');
+  assert.ok(config.COMBAT_DIFFICULTIES);
+  assert.equal(config.PLAYER_MOVE_SPEED, 4.4);
+  const medium = combat.getEnemyCount(90, 70, 1, 'normal');
+  const large = combat.getEnemyCount(110, 86, 1, 'normal');
+  assert.ok(medium >= 36 && medium <= 45);
+  assert.ok(large >= 50 && large <= 65);
+  assert.ok(combat.getEnemyCount(90, 70, 1, 'easy') < medium);
+  assert.ok(combat.getEnemyCount(90, 70, 1, 'hard') > medium);
+  assert.ok(combat.getEnemyCount(90, 70, 5, 'normal') > medium);
+  assert.equal(combat.getEnemyCount(166, 114, 8, 'hard'), 96);
+  for (const type of ['skeleton', 'warrior', 'runner', 'wraith', 'archer', 'emberling']) {
+    const easy = createEnemy(type, 1, 1, 3, () => .5, 'easy');
+    const normal = createEnemy(type, 1, 1, 3, () => .5, 'normal');
+    const hard = createEnemy(type, 1, 1, 3, () => .5, 'hard');
+    assert.ok(easy.speed < normal.speed && normal.speed < hard.speed);
+    assert.ok(easy.damage < normal.damage && normal.damage < hard.damage);
+    assert.ok(easy.shotCooldown > normal.shotCooldown && normal.shotCooldown > hard.shotCooldown);
+    assert.ok(easy.meleeCooldown > normal.meleeCooldown && normal.meleeCooldown > hard.meleeCooldown);
+    assert.ok(easy.projectileWindup >= .3 && hard.projectileWindup >= .3);
+  }
+});
+
+test('every regular enemy class visibly winds up a projectile attack in open sight', async () => {
+  for (const type of ['skeleton', 'warrior', 'runner', 'wraith', 'archer', 'emberling']) {
+    const enemy = createEnemy(type, 1.5, 1.5, 3, () => .5);
+    enemy.attackAt = 5000;
+    const before = await enemyScenario(['1111111111', '1000000001', '1111111111'], structuredClone(enemy), { x: 7.5, y: 1.5 });
+    assert.ok(before.enemy.attackAnim >= .3, `${type} must visibly telegraph a shot`);
+    assert.equal(before.hostileBullets.length, 0);
+    const after = await enemyScenario(['1111111111', '1000000001', '1111111111'], enemy, { x: 7.5, y: 1.5 }, 45);
+    assert.ok(after.hostileBullets.length >= 1 && after.hostileBullets.length <= 3, `${type} must release a bounded projectile pattern`);
+    const blocked = await enemyScenario(['1111111111', '1000100001', '1111111111'], createEnemy(type, 1.5, 1.5, 3, () => .5), { x: 7.5, y: 1.5 }, 45);
+    assert.equal(blocked.hostileBullets.length, 0, `${type} cannot fire through a wall`);
+  }
+});
+
+test('returning to the main menu stops combat, preserves checkpoint and selections, and restores title focus', async () => {
+  const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
+  const run = new Function(`
+    let running=true,paused=true,settingsOpen=true,pausedBeforeSettings=true,won=false,dead=false;
+    let mouseHeld=true,lastMouse={active:true},fireCooldown=20,reloadTimer=1,damageCooldown=.5,hitFlash=.2;
+    let bullets=[{}],hostileBullets=[{}],particles=[{}],floatingTexts=[{}],combatPulse=1,showMap=true;
+    let lastIdleDraw=0,checkpoint={stage:3,difficulty:'hard',combatDifficulty:'easy'};
+    const keyState=new Set(['f','w']),player={moving:true},difficulty='hard',combatDifficulty='easy';
+    const difficultySelect={value:'hard'},combatDifficultySelect={value:'easy'};
+    const classes=()=>({values:new Set(),add(value){this.values.add(value);},remove(value){this.values.delete(value);},contains(value){return this.values.has(value);}});
+    const overlay=()=>({classList:classes(),inert:false,setAttribute(){},removeAttribute(){}});
+    const startOverlay=overlay(),pauseOverlay=overlay(),winOverlay=overlay(),deadOverlay=overlay(),settingsOverlay=overlay();
+    const titleScreen=overlay(),canvasWrap=overlay(),appShell={inert:false},pauseButton={disabled:false,textContent:''},gameStatus={textContent:''};
+    titleScreen.classList.add('is-hidden');titleScreen.inert=true;canvasWrap.classList.add('playing');
+    let focused='canvas',threat=1;
+    const titleStartButton={focus(){focused='titleStartButton';}},titleContinueButton=overlay();
+    const audioPlayer={setThreat(value){threat=value;}},requestAnimationFrame=callback=>callback();
+    const loadCampaignSave=()=>checkpoint,clearCampaignSave=()=>{checkpoint=null;},saveCampaign=value=>{checkpoint=value;};
+    ${['showOverlay','hideOverlay','returnToMenu'].map(name => functionSource(source, name)).join('\n')}
+    returnToMenu();
+    return {running,paused,settingsOpen,pausedBeforeSettings,mouseHeld,reloadTimer,fireCooldown,bullets,hostileBullets,keys:[...keyState],checkpoint,focused,threat,
+      size:difficultySelect.value,combat:combatDifficultySelect.value,playing:canvasWrap.classList.contains('playing'),titleHidden:titleScreen.classList.contains('is-hidden'),titleInert:titleScreen.inert,appInert:appShell.inert,startHidden:startOverlay.classList.contains('hidden')};
+  `);
+  const result = run();
+  assert.equal(result.running, false); assert.equal(result.paused, false); assert.equal(result.settingsOpen, false);
+  assert.equal(result.mouseHeld, false); assert.equal(result.reloadTimer, 0); assert.equal(result.fireCooldown, 0);
+  assert.deepEqual(result.bullets, []); assert.deepEqual(result.hostileBullets, []); assert.deepEqual(result.keys, []);
+  assert.deepEqual(result.checkpoint, {stage:3,difficulty:'hard',combatDifficulty:'easy'});
+  assert.equal(result.size, 'hard'); assert.equal(result.combat, 'easy');
+  assert.equal(result.playing, false); assert.equal(result.titleHidden, false); assert.equal(result.titleInert, false); assert.equal(result.appInert, true);
+  assert.equal(result.startHidden, false); assert.equal(result.focused, 'titleStartButton'); assert.equal(result.threat, 0);
+});
+
+test('projectile collision finds nearby targets across bucket edges and skips dead or distant enemies', async () => {
+  const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
+  const run = new Function(`
+    const cols=100,rows=100,MAX_ENEMIES=96;
+    const enemies=Array.from({length:94},(_,i)=>({x:50+i%10,y:50+Math.floor(i/10),alive:true,boss:false}));
+    enemies.push({x:4.1,y:3.5,alive:false,boss:false},{x:4.1,y:3.5,alive:true,boss:true});
+    let enemyBucketHeads=null,enemyBucketNext=null,enemyBucketCols=0,enemyBucketRows=0;
+    ${['rebuildEnemyBuckets','enemyAtBullet'].map(name=>functionSource(source,name)).join('\n')}
+    rebuildEnemyBuckets();
+    const acrossEdge=enemyAtBullet(3.7,3.5),miss=enemyAtBullet(3.5,3.5);
+    enemies[95].alive=false;
+    return {index:enemies.indexOf(acrossEdge),miss,afterDeath:enemyAtBullet(3.7,3.5)};
+  `);
+  const result = run();
+  assert.equal(result.index, 95); assert.equal(result.miss, null); assert.equal(result.afterDeath, null);
+});
+
+test('projectile pressure remains capped and distant enemies stay asleep', async () => {
+  const emberling=createEnemy('emberling',1.5,1.5,3,()=>.5,'hard');
+  emberling.attackMode='shoot';emberling.attackAnim=.01;emberling.attackAim=0;emberling.shotAt=5000;
+  const capped=await enemyScenario(['1111111111','1000000001','1111111111'],emberling,{x:7.5,y:1.5},1,'hard',127);
+  assert.equal(capped.hostileBullets.length,128);
+  const far=createEnemy('skeleton',1.5,1.5,3,()=>.5);
+  const distant=await enemyScenario(['1'.repeat(42),'1'+'0'.repeat(40)+'1','1'.repeat(42)],far,{x:38.5,y:1.5},100);
+  assert.equal(distant.enemy.x,1.5);assert.equal(distant.enemy.attackAnim,0);assert.equal(distant.hostileBullets.length,0);
 });

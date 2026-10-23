@@ -1,11 +1,7 @@
-// A small, independent title scene. Masonry and flame frames are drawn once;
-// animation only composites those images and a fixed pool of embers at 30 FPS.
-export function createTitleScene({ canvas, screen, getReducedMotion = () => false }) {
-  const context = canvas?.getContext('2d', { alpha: false });
-  if (!context || !screen) return { setReducedMotion() {}, destroy() {} };
-
-  const backdrop = document.createElement('canvas');
-  const stone = backdrop.getContext('2d', { alpha: false });
+// Fire sprites are shared by both menu scenes; only the visible scene animates.
+let sharedFireSprites;
+function getFireSprites() {
+  if (sharedFireSprites) return sharedFireSprites;
   const glow = document.createElement('canvas');
   glow.width = glow.height = 128;
   const glowContext = glow.getContext('2d');
@@ -57,6 +53,20 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     fire.restore();
   }
 
+  sharedFireSprites = { glow, flames, frameCount, flameWidth, flameHeight };
+  return sharedFireSprites;
+}
+
+// A small, independent title scene. Masonry and flame frames are drawn once;
+// animation only composites those images and a fixed pool of embers at 30 FPS.
+export function createTitleScene({ canvas, screen, getReducedMotion = () => false, variant = 'title' }) {
+  const context = canvas?.getContext('2d', { alpha: false });
+  if (!context || !screen) return { setReducedMotion() {}, setActive() {}, destroy() {} };
+
+  const backdrop = document.createElement('canvas');
+  const stone = backdrop.getContext('2d', { alpha: false });
+  const { glow, flames, frameCount, flameWidth, flameHeight } = getFireSprites();
+
   let width = 1;
   let height = 1;
   let scale = 1;
@@ -65,6 +75,7 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
   let lastFrame = -Infinity;
   let animationTime = 0;
   let destroyed = false;
+  let active = true;
   let suppliedMotion;
   const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   const embers = Array.from({ length: 64 }, (_, index) => ({
@@ -100,28 +111,28 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     const rise = height * .435;
     scale = Math.min(width / 1200, height / 750);
     const wallGradient = stone.createLinearGradient(0, 0, width, height);
-    wallGradient.addColorStop(0, '#16241f');
-    wallGradient.addColorStop(.45, '#101b18');
-    wallGradient.addColorStop(1, '#101410');
+    wallGradient.addColorStop(0, '#241a14');
+    wallGradient.addColorStop(.45, '#17120f');
+    wallGradient.addColorStop(1, '#100d0b');
     stone.fillStyle = wallGradient;
     stone.fillRect(0, 0, width, height);
 
-    // Irregular stone courses, etched joints and small, deterministic moss flecks.
+    // Irregular soot-darkened stone courses with warm mineral seams.
     const course = Math.max(29, height / 14);
     for (let y = -course; y < floor; y += course) {
       let x = -(random() * 140);
       while (x < width) {
         const blockWidth = (90 + random() * 85) * Math.max(.6, scale);
         const gray = 20 + Math.floor(random() * 15);
-        stone.fillStyle = `rgb(${gray - 3},${gray + 8},${gray + 3})`;
+        stone.fillStyle = `rgb(${gray + 9},${gray + 3},${gray - 3})`;
         stone.fillRect(x + 2, y + 2, blockWidth - 4, course - 4);
-        stone.fillStyle = 'rgba(124,143,104,.10)';
+        stone.fillStyle = 'rgba(181,141,99,.13)';
         stone.fillRect(x + 3, y + 3, blockWidth - 6, 1);
-        stone.strokeStyle = 'rgba(1,5,4,.7)';
+        stone.strokeStyle = 'rgba(8,5,3,.8)';
         stone.lineWidth = 2;
         stone.strokeRect(x + 1, y + 1, blockWidth - 2, course - 2);
         if (random() > .6) {
-          stone.fillStyle = 'rgba(92,112,60,.13)';
+          stone.fillStyle = 'rgba(161,93,41,.11)';
           stone.fillRect(x + 7, y + 4, blockWidth * random() * .65, 3 + random() * 5);
         }
         if (random() > .5) {
@@ -140,9 +151,9 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     // A dark opening and receding arches provide depth behind the typography.
     archPath(stone, cx, spring, inner + 3, rise - thickness * .75, floor + 4);
     const depth = stone.createLinearGradient(0, height * .12, 0, floor);
-    depth.addColorStop(0, '#020a09');
-    depth.addColorStop(.72, '#071714');
-    depth.addColorStop(1, '#203228');
+    depth.addColorStop(0, '#080504');
+    depth.addColorStop(.72, '#140d09');
+    depth.addColorStop(1, '#332116');
     stone.fillStyle = depth;
     stone.fill();
     stone.save();
@@ -150,13 +161,13 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     for (let step = 0; step < 4; step++) {
       const inset = 38 * (step + 1) * Math.max(.65, scale);
       archPath(stone, cx, spring + step * height * .032, inner - inset, rise - thickness - inset * .5, floor);
-      stone.strokeStyle = `rgba(85,111,87,${.13 - step * .02})`;
+      stone.strokeStyle = `rgba(151,103,64,${.18 - step * .025})`;
       stone.lineWidth = 8 * Math.max(.7, scale);
       stone.stroke();
     }
     const mist = stone.createRadialGradient(cx, floor, 0, cx, floor, inner);
-    mist.addColorStop(0, 'rgba(82,115,83,.16)');
-    mist.addColorStop(1, 'rgba(13,31,24,0)');
+    mist.addColorStop(0, 'rgba(194,104,36,.14)');
+    mist.addColorStop(1, 'rgba(38,20,10,0)');
     stone.fillStyle = mist;
     stone.fillRect(0, 0, width, height);
     stone.restore();
@@ -172,9 +183,9 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       stone.ellipse(cx, spring, inner, rise - thickness * .75, 0, b, a, true);
       stone.closePath();
       const gray = 36 + Math.floor(random() * 16);
-      stone.fillStyle = `rgb(${gray + 3},${gray + 8},${gray - 1})`;
+      stone.fillStyle = `rgb(${gray + 15},${gray + 7},${gray - 3})`;
       stone.fill();
-      stone.strokeStyle = '#080e0b';
+      stone.strokeStyle = '#120b07';
       stone.lineWidth = 3 * Math.max(.5, scale);
       stone.stroke();
       stone.beginPath();
@@ -187,22 +198,22 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       const left = side < 0 ? cx - outer : cx + inner;
       for (let y = spring; y < floor; y += course * 1.2) {
         const gray = 34 + Math.floor(random() * 14);
-        stone.fillStyle = `rgb(${gray + 3},${gray + 8},${gray - 2})`;
+        stone.fillStyle = `rgb(${gray + 14},${gray + 5},${gray - 4})`;
         stone.fillRect(left + 2, y + 2, thickness - 4, course * 1.2 - 4);
-        stone.fillStyle = '#9e8b5733';
+        stone.fillStyle = '#c3945a44';
         stone.fillRect(side < 0 ? left + thickness - 4 : left + 3, y + 4, 2, course * 1.2 - 8);
       }
-      stone.fillStyle = '#3d4435';
+      stone.fillStyle = '#4c3e30';
       stone.fillRect(left - 7 * scale, floor - 11 * scale, thickness + 14 * scale, 19 * scale);
     }
 
     // The flagstone floor fans toward the portal's vanishing point.
     const floorGradient = stone.createLinearGradient(0, floor, 0, height);
-    floorGradient.addColorStop(0, '#1a261d');
-    floorGradient.addColorStop(1, '#101710');
+    floorGradient.addColorStop(0, '#2a1e16');
+    floorGradient.addColorStop(1, '#15100c');
     stone.fillStyle = floorGradient;
     stone.fillRect(0, floor, width, height - floor);
-    stone.strokeStyle = '#030805b3';
+    stone.strokeStyle = '#080503b3';
     stone.lineWidth = 2;
     for (let x = -width; x <= width * 2; x += width / 8) {
       stone.beginPath();
@@ -212,24 +223,24 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     }
     for (const fraction of [.08, .3, .62]) {
       const y = floor + (height - floor) * fraction;
-      stone.fillStyle = '#030805';
+      stone.fillStyle = '#090604';
       stone.fillRect(0, y, width, 2);
-      stone.fillStyle = '#7782611c';
+      stone.fillStyle = '#c28c571c';
       stone.fillRect(0, y + 2, width, 1);
     }
 
-    const torchSpread = mobile ? width * .43 : Math.min(width * .35, height * .63);
-    const torchY = height * (mobile ? .76 : .745);
+    const torchSpread = mobile ? width * .445 : Math.min(width * .38, height * .68);
+    const torchY = height * (variant === 'selection' ? (mobile ? .69 : .76) : (mobile ? .76 : .77));
     torches = [-1, 1].map(side => ({ x: cx + side * torchSpread, y: torchY }));
     for (const torch of torches) {
       const s = Math.max(.55, scale);
       // Warm spill on stone is cached; the brighter core will flicker separately.
       stone.drawImage(glow, torch.x - 170 * s, torch.y - 210 * s, 340 * s, 400 * s);
-      stone.fillStyle = '#272a20';
+      stone.fillStyle = '#2b2018';
       stone.fillRect(torch.x - 14 * s, torch.y + 27 * s, 28 * s, 85 * s);
-      stone.fillStyle = '#635a3c';
+      stone.fillStyle = '#6b4c31';
       stone.fillRect(torch.x - 18 * s, torch.y + 24 * s, 36 * s, 8 * s);
-      stone.fillStyle = '#141a15';
+      stone.fillStyle = '#17100c';
       stone.fillRect(torch.x - 21 * s, torch.y + 105 * s, 42 * s, 10 * s);
       stone.fillStyle = '#4e3b23';
       stone.beginPath();
@@ -244,7 +255,7 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       stone.stroke();
       stone.fillStyle = '#d98b37';
       stone.fillRect(torch.x - 31 * s, torch.y - 2 * s, 62 * s, 4 * s);
-      stone.strokeStyle = '#25251b';
+      stone.strokeStyle = '#2b1b11';
       for (let bar = -1; bar <= 1; bar++) {
         stone.beginPath();
         stone.moveTo(torch.x + bar * 15 * s, torch.y - 9 * s);
@@ -257,7 +268,7 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       const x = random() * width;
       const y = floor + random() * (height - floor);
       const s = (4 + random() * 14) * Math.max(.5, scale);
-      stone.fillStyle = index % 2 ? '#30382a' : '#20291e';
+      stone.fillStyle = index % 2 ? '#3f3023' : '#2b2019';
       stone.beginPath();
       stone.moveTo(x, y);
       stone.lineTo(x + s, y - s * .3);
@@ -278,7 +289,10 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
   }
 
   function isVisible() {
-    return !destroyed && !document.hidden && !screen.classList.contains('is-hidden');
+    if (destroyed || !active || document.hidden || screen.closest('.hidden, .is-hidden, [hidden]')) return false;
+    // The second scene sleeps while the opening title is in front of it.
+    const title = variant === 'selection' ? document.getElementById('titleScreen') : null;
+    return !title || title.classList.contains('is-hidden') || title.classList.contains('hidden') || title.hidden;
   }
 
   function paint(time) {
@@ -298,8 +312,8 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       context.globalAlpha = 1;
       context.globalCompositeOperation = 'source-over';
       const frame = still ? side * 7 : (Math.floor(time * 18) + side * 9) % frameCount;
-      const fireW = 102 * s;
-      const fireH = 174 * s * pulse;
+      const fireW = 122 * s;
+      const fireH = 208 * s * pulse;
       context.drawImage(flames, frame * flameWidth, 0, flameWidth, flameHeight,
         torch.x - fireW / 2, torch.y - fireH * .96, fireW, fireH);
     }
@@ -346,8 +360,8 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
     const bounds = screen.getBoundingClientRect();
     const pixelScale = Math.min(1, 1200 / Math.max(1, bounds.width), 850 / Math.max(1, bounds.height),
       Math.sqrt(850000 / Math.max(1, bounds.width * bounds.height)));
-    const nextWidth = Math.max(1, Math.round(bounds.width * pixelScale));
-    const nextHeight = Math.max(1, Math.round(bounds.height * pixelScale));
+    const nextWidth = Math.max(1, Math.floor(bounds.width * pixelScale));
+    const nextHeight = Math.max(1, Math.floor(bounds.height * pixelScale));
     if (nextWidth !== width || nextHeight !== height) {
       width = canvas.width = backdrop.width = nextWidth;
       height = canvas.height = backdrop.height = nextHeight;
@@ -357,7 +371,11 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
   }
 
   const observer = new MutationObserver(sync);
-  observer.observe(screen, { attributes: true, attributeFilter: ['class'] });
+  for (let ancestor = screen; ancestor; ancestor = ancestor.parentElement) {
+    observer.observe(ancestor, { attributes: true, attributeFilter: ['class', 'hidden'] });
+  }
+  const openingTitle = variant === 'selection' ? document.getElementById('titleScreen') : null;
+  if (openingTitle) observer.observe(openingTitle, { attributes: true, attributeFilter: ['class', 'hidden'] });
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
   resizeObserver?.observe(screen);
   if (!resizeObserver) window.addEventListener('resize', resize);
@@ -366,6 +384,12 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
   resize();
 
   return {
+    setActive(value) {
+      const nextActive = Boolean(value);
+      if (active === nextActive) return;
+      active = nextActive;
+      sync();
+    },
     setReducedMotion(value) {
       suppliedMotion = typeof value === 'boolean' ? value : undefined;
       sync();
@@ -379,7 +403,7 @@ export function createTitleScene({ canvas, screen, getReducedMotion = () => fals
       document.removeEventListener('visibilitychange', sync);
       motionQuery.removeEventListener('change', sync);
       // Release the cached backing stores if the application replaces the title.
-      backdrop.width = backdrop.height = flames.width = flames.height = glow.width = glow.height = 1;
+      backdrop.width = backdrop.height = 1;
     },
   };
 }

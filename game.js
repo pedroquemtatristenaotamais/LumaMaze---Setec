@@ -1,4 +1,4 @@
-import { DIFFICULTIES, MAX_STAGES, WEAPONS } from './config.js';
+import { DIFFICULTIES, COMBAT_DIFFICULTIES, MAX_STAGES, PLAYER_MOVE_SPEED, WEAPONS } from './config.js';
 import { makeMaze, widenMaze } from './maze-generator.js';
 import { createAudioPlayer } from './audio.js';
 import { createRenderer } from './renderer.js';
@@ -6,6 +6,7 @@ import { createTitleScene } from './title-scene.js';
 import { createHUD } from './hud.js';
 import { isBossStage, createEnemy, chooseEnemyType } from './enemy-types.js';
 import { createDistanceField } from './pathfinding.js';
+import { getEnemyCount, resolveCombatDifficulty } from './combat-difficulty.js';
 import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSettings } from './save-system.js';
 
 (() => {
@@ -33,12 +34,14 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   const deadOverlay = $('deadOverlay');
   const startButton = $('startButton');
   const resumeButton = $('resumeButton');
+  const pauseMenuButton = $('pauseMenuButton');
   const nextButton = $('nextButton');
   const retryButton = $('retryButton');
   const restartButton = $('restartButton');
   const pauseButton = $('pauseButton');
   const soundButton = $('soundButton');
   const difficultySelect = $('difficultySelect');
+  const combatDifficultySelect = $('combatDifficultySelect');
   const gameStatus = $('gameStatus');
   const levelLabel = $('levelLabel');
   const timerValue = $('timerValue');
@@ -55,6 +58,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   const weaponName = $('weaponName');
   const ammoCount = $('ammoCount');
   const weaponButtons = [...document.querySelectorAll('[data-weapon]')];
+  const hudWeaponButtons = [...document.querySelectorAll('[data-hud-weapon]')];
   const winHeadline = $('winHeadline');
   const winCopy = $('winCopy');
 
@@ -63,6 +67,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   let cols = 29;
   let rows = 21;
   let difficulty = 'normal';
+  let combatDifficulty = 'normal';
   let stage = 1;
   let player = { x: 1.5, y: 1.5, angle: 0, moving: false };
   let exit = { x: 27, y: 19 };
@@ -123,8 +128,12 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   let navigationDirty = true;
   let lastPathUpdate = -Infinity;
   let lastPlayerCell = '1,1';
+  let enemyBucketHeads = null;
+  let enemyBucketNext = null;
+  let enemyBucketCols = 0;
+  let enemyBucketRows = 0;
   const hudValues = {};
-  const MAX_ENEMIES = 64;
+  const MAX_ENEMIES = 96;
   const MAX_BULLETS = 96;
   const MAX_HOSTILE_BULLETS = 128;
   const MAX_PARTICLES = 320;
@@ -150,6 +159,9 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     getState: () => ({ maze, cols, rows, player, exit, coins, weaponPickups, lootPickups, secretDoors, enemies, bullets, hostileBullets, particles, floatingTexts, combatPulse, pickupToast, pickupToastUntil, hitFlash, hasKey, objectiveText, showMap, brightness, reducedMotion, graphicsQuality })
   });
   const titleScene = createTitleScene({ canvas: $('titleFxCanvas'), screen: titleScreen, getReducedMotion: () => reducedMotion });
+  const selectionScene = createTitleScene({ canvas: $('startFxCanvas'), screen: startOverlay, variant: 'selection', getReducedMotion: () => reducedMotion });
+  let selectionSceneActive = false;
+  selectionScene.setActive?.(false);
 
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const randInt = max => Math.floor(Math.random() * max);
@@ -316,7 +328,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
         tone(640,.12,'triangle',.04); setTimeout(() => tone(850,.16,'sine',.03),70);
       } else if (item.type === 'health') {
         const before = health; health = Math.min(100, health + 32);
-        showFloatingText(item.x + .5, item.y + .5, health > before ? `+${health - before} VIDA` : 'VIDA COMPLETA', '#a3d5ac');
+        showFloatingText(item.x + .5, item.y + .5, health > before ? `+${health - before} VIDA` : 'VIDA COMPLETA', '#ffd58a');
         showPickupToast(health > before ? `KIT MÉDICO · +${health-before} DE VIDA` : 'KIT MÉDICO · VIDA JÁ COMPLETA');
         tone(500,.1,'sine',.035);
       } else if (item.type === 'ammo') {
@@ -400,8 +412,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     const pool = openCells().filter(p => dist(p.x + .5, p.y + .5, player.x, player.y) > 8.5 &&
       dist(p.x + .5, p.y + .5, exit.x + .5, exit.y + .5) > 4.2 &&
       weaponPickups.every(w => dist(p.x + .5, p.y + .5, w.x + .5, w.y + .5) > 2.6));
-    const sizeBonus = Math.floor((cols * rows) / 2800);
-    const amount = Math.min(14 + Math.floor((stage - 1) * 2.6) + (difficulty === 'hard' ? 6 : difficulty === 'easy' ? -3 : 0) + sizeBonus, MAX_ENEMIES - (isBossStage(stage) ? 1 : 0));
+    const amount = Math.min(getEnemyCount(cols, rows, stage, combatDifficulty), MAX_ENEMIES) - (isBossStage(stage) ? 1 : 0);
     enemies = [];
     const placed = [];
     const regionalPlans = [{ region: 3, type: 'emberling' }];
@@ -426,7 +437,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       placed.push(p);
       for (let j = pool.length - 1; j >= 0; j--) if (dist(pool[j].x, pool[j].y, p.x, p.y) < 1.25) pool.splice(j, 1);
       const type = regionalCells.length ? encounter.type : chooseEnemyType(stage, Math.random, maze[p.y][p.x]);
-      enemies.push(createEnemy(type, p.x + .5, p.y + .5, stage));
+      enemies.push(createEnemy(type, p.x + .5, p.y + .5, stage, Math.random, combatDifficulty));
     }
 
     // A named guardian waits near the exit on milestone stages and carries the key.
@@ -440,7 +451,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       bossCandidates.sort((a,b) => dist(a.x+.5,a.y+.5,exit.x+.5,exit.y+.5) - dist(b.x+.5,b.y+.5,exit.x+.5,exit.y+.5));
       const p = bossCandidates[0];
       const fallback = p || openCells().filter(cell => dist(cell.x+.5,cell.y+.5,player.x,player.y)>10 && weaponPickups.every(w => dist(cell.x+.5,cell.y+.5,w.x+.5,w.y+.5)>2.6) && enemies.every(e => dist(e.x,e.y,cell.x+.5,cell.y+.5)>2)).sort((a,b)=>dist(b.x,b.y,player.x,player.y)-dist(a.x,a.y,player.x,player.y))[0];
-      if (fallback) { const boss = createEnemy('guardian', fallback.x + .5, fallback.y + .5, stage); boss.dropKey = true; enemies.push(boss); }
+      if (fallback) { const boss = createEnemy('guardian', fallback.x + .5, fallback.y + .5, stage, Math.random, combatDifficulty); boss.dropKey = true; enemies.push(boss); }
     }
   }
 
@@ -450,6 +461,8 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       ? saved.difficulty
       : (difficultySelect.value in DIFFICULTIES ? difficultySelect.value : 'normal');
     difficultySelect.value = difficulty;
+    combatDifficulty = resolveCombatDifficulty(saved, combatDifficultySelect?.value, continueSaved);
+    if (combatDifficultySelect) combatDifficultySelect.value = combatDifficulty;
     if (resetCampaign && !continueSaved) { stage = 1; clearCampaignSave(); titleContinueButton?.classList.add('hidden'); }
     else if (saved) stage = saved.stage;
     collected = 0; steps = 0; stepDistance = 0; kills = saved?.kills || 0; health = saved?.health ?? 100;
@@ -526,6 +539,24 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     }
   }
 
+  function returnToMenu() {
+    running = false; paused = false; settingsOpen = false; pausedBeforeSettings = false;
+    won = false; dead = false; mouseHeld = false; lastMouse = null; showMap = false;
+    fireCooldown = 0; reloadTimer = 0; damageCooldown = 0; hitFlash = 0;
+    bullets = []; hostileBullets = []; particles = []; floatingTexts = []; combatPulse = 0;
+    keyState.clear(); player.moving = false;
+    audioPlayer.setThreat(0);
+    canvasWrap.classList.remove('playing');
+    hideOverlay(pauseOverlay); hideOverlay(winOverlay); hideOverlay(deadOverlay); hideOverlay(settingsOverlay);
+    showOverlay(startOverlay);
+    pauseButton.disabled = true; pauseButton.textContent = 'Ⅱ';
+    gameStatus.textContent = 'ESCOLHA SUA JORNADA'; lastIdleDraw = -Infinity;
+    if (appShell) appShell.inert = true;
+    titleScreen.inert = false; titleScreen.removeAttribute('aria-hidden');
+    titleScreen.classList.remove('is-hidden');
+    requestAnimationFrame(() => titleStartButton.focus({ preventScroll: true }));
+  }
+
   function walkableCell(x, y) {
     if (y < 0 || x < 0 || y >= rows || x >= cols || !maze[y] || maze[y][x] === 1) return false;
     return !secretDoors.some(door => !door.opened && door.x === x && door.y === y);
@@ -559,7 +590,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       dx /= length; dy /= length;
       player.angle = Math.atan2(dy, dx);
       // A tight collision radius lets the traveler pass through one-tile corridors.
-      const moved = moveEntity(player, dx * 4.0 * dt, dy * 4.0 * dt, .225);
+      const moved = moveEntity(player, dx * PLAYER_MOVE_SPEED * dt, dy * PLAYER_MOVE_SPEED * dt, .225);
       stepDistance += moved;
       if (stepDistance >= .8) { steps += Math.floor(stepDistance / .8); stepDistance %= .8; updateHUD(); }
       player.moving = moved > 0;
@@ -576,7 +607,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     const region = maze[cellY]?.[cellX];
     if (region >= 2 && !visitedAreas.has(region)) {
       visitedAreas.add(region);
-      const areas = { 2: ['CRIPTA ALAGADA', '#95cad0'], 3: ['CAPELA ESQUECIDA', '#dfc3ec'], 4: ['BOSQUE FÚNGICO', '#b6d18f'] };
+      const areas = { 2: ['CRIPTA ALAGADA', '#e6c88b'], 3: ['CAPELA ESQUECIDA', '#ffd98b'], 4: ['BOSQUE FÚNGICO', '#efad69'] };
       const [name, color] = areas[region];
       showPickupToast(`REGIÃO DESCOBERTA · ${name}`, 2300);
       showFloatingText(player.x, player.y, name, color, 1.8);
@@ -622,7 +653,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       const slot = ammo[currentWeapon] || { mag: 0, reserve: 0 };
       ammoCount.textContent = `${slot.mag} / ${slot.reserve}`;
     }
-    hud.updateAmmo(currentWeapon, ammo, WEAPONS);
+    hud.updateAmmo(currentWeapon, ammo, WEAPONS, weaponInventory);
     weaponButtons.forEach(button => {
       const active = button.dataset.weapon === currentWeapon;
       button.classList.toggle('active', active);
@@ -710,6 +741,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function updateEnemies(dt, time) {
+    const profile = COMBAT_DIFFICULTIES[combatDifficulty];
     // Player movement and door interaction dirty this shared field. At most one
     // rebuild per 90 ms, regardless of how many enemies are pursuing.
     if (navigation && navigationDirty && time - lastPathUpdate >= 90) {
@@ -726,7 +758,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
 
       if (enemy.charge > 0) {
         const home = maze[Math.floor(enemy.y)]?.[Math.floor(enemy.x)];
-        const speed = home === 2 || home === 3 ? 4.8 : 4.1;
+        const speed = (home === 2 || home === 3 ? 4.8 : 4.1) * profile.speed;
         const step = Math.min(dt, enemy.charge) * speed;
         const moved = moveEntity(enemy, Math.cos(enemy.chargeAngle) * step, Math.sin(enemy.chargeAngle) * step, .20);
         enemy.charge = Math.max(0, enemy.charge - dt);
@@ -744,21 +776,25 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
         enemy.angle = enemy.attackAim;
         if (enemy.attackAnim <= 0 && !enemy.attackHit) {
           enemy.attackHit = true;
-          if (enemy.attackKind === 'dash') {
+          const attackMode = enemy.attackMode || (enemy.ranged ? 'shoot' : enemy.attackKind === 'dash' ? 'dash' : 'melee');
+          if (attackMode === 'dash') {
             enemy.charge = .48; enemy.chargeAngle = enemy.attackAim;
             tone(190, .09, 'triangle', .025);
-          } else if (enemy.ranged) {
-            const fan = enemy.attackKind === 'fan';
-            const home = maze[Math.floor(enemy.y)]?.[Math.floor(enemy.x)];
-            const speed = fan ? (home === 3 || home === 4 ? 3.8 : 3.4) : 4.8;
-            const count = fan ? 3 : 1;
-            for (let shot = 0; shot < count && hostileBullets.length < MAX_HOSTILE_BULLETS; shot++) {
-              const angle = enemy.attackAim + (fan ? (shot - 1) * .22 : (Math.random() - .5) * .055);
-              hostileBullets.push({ x: enemy.x + Math.cos(angle) * .28, y: enemy.y + Math.sin(angle) * .28,
-                vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: enemy.damage,
-                color: fan ? '#ef985d' : '#8ed3ad', life: fan ? 3.0 : 3.2 });
+          } else if (attackMode === 'shoot') {
+            if (!hasLineOfSight(enemy.x, enemy.y, enemy.attackTargetX ?? player.x, enemy.attackTargetY ?? player.y)) continue;
+            const pattern = enemy.projectilePattern;
+            const offsets = pattern === 'fan' ? [-.22, 0, .22] : pattern === 'twin' ? [-.10, .10] : pattern === 'spectral' ? [-.17, .17] : [0];
+            const speed = (pattern === 'needle' ? 5.4 : pattern === 'arrow' ? 5.0 : pattern === 'fan' ? 3.6 : pattern === 'spectral' ? 4.0 : 4.4) * profile.projectileSpeed;
+            for (const offset of offsets) {
+              if (hostileBullets.length >= MAX_HOSTILE_BULLETS) break;
+              const angle = enemy.attackAim + offset;
+              const x = enemy.x + Math.cos(angle) * .28, y = enemy.y + Math.sin(angle) * .28;
+              if (!hasLineOfSight(enemy.x, enemy.y, x, y)) continue;
+              hostileBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+                damage: Math.max(2, Math.round(enemy.damage * (enemy.ranged ? 1 : enemy.boss ? .55 : .65))),
+                color: pattern === 'fan' ? '#ef985d' : pattern === 'spectral' ? '#e4c88a' : '#f3c875', life: 2.6 });
             }
-            tone(fan ? 175 : 330, .09, 'triangle', .024);
+            tone(pattern === 'fan' ? 175 : 330, .09, 'triangle', .024);
           } else {
             d = dist(enemy.x, enemy.y, player.x, player.y);
             const reach = enemy.boss ? 1.28 : enemy.type === 'runner' ? .74 : .9;
@@ -766,7 +802,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
             if (enemy.boss && d < 2.6) {
               for (let i = 0; i < 8 && hostileBullets.length < MAX_HOSTILE_BULLETS; i++) {
                 const angle = i * Math.PI / 4;
-                hostileBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * 3.2, vy: Math.sin(angle) * 3.2, damage: 10 + stage, color: '#e88c60', life: 1.7 });
+                hostileBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * 3.2 * profile.projectileSpeed, vy: Math.sin(angle) * 3.2 * profile.projectileSpeed, damage: Math.max(2, Math.round((10 + stage) * profile.damage)), color: '#e88c60', life: 1.7 });
               }
             }
           }
@@ -774,13 +810,13 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
         continue;
       }
 
-      const needsSight = enemy.chase && ((enemy.ranged && d < 10) || (enemy.attackKind === 'dash' && d < 5.8) || d < 2);
+      const needsSight = enemy.chase && d < 10;
       if (needsSight && (time - enemy.sightAt > 180 || d < 1.2)) {
         enemy.canSee = hasLineOfSight(enemy.x, enemy.y, player.x, player.y);
         enemy.sightAt = time;
       } else if (!needsSight) enemy.canSee = false;
 
-      if (time - enemy.pathAt > (enemy.chase ? 200 : 1000)) {
+      if (time - enemy.pathAt > (enemy.chase ? 160 : 1000 * profile.cooldown)) {
         enemy.pathAt = time;
         if (enemy.ranged && enemy.chase && d > 3.8 && d < 8.2 && enemy.canSee) {
           enemy.targetX = enemy.x; enemy.targetY = enemy.y;
@@ -794,7 +830,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
             const [dx, dy] = dirs[(i + offset) % 4], nx = Math.floor(enemy.x) + dx, ny = Math.floor(enemy.y) + dy;
             if (walkableCell(nx, ny)) { enemy.targetX = nx + .5; enemy.targetY = ny + .5; break; }
           }
-          enemy.wanderAt = time + 1200 + Math.random() * 900;
+          enemy.wanderAt = time + (1000 + Math.random() * 700) * profile.cooldown;
         }
       }
       const vx = enemy.targetX - enemy.x, vy = enemy.targetY - enemy.y;
@@ -806,14 +842,17 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       }
       d = dist(enemy.x, enemy.y, player.x, player.y);
       const aim = Math.atan2(player.y - enemy.y, player.x - enemy.x);
-      const rangedReady = enemy.ranged && enemy.chase && d < 9.4 && d > 3.1 && enemy.canSee && time - enemy.shotAt > (enemy.attackKind === 'fan' ? 2400 : Math.max(1050, 2300 - stage * 80));
-      const dashReady = enemy.attackKind === 'dash' && d > 1.3 && d < 5.5 && enemy.canSee && time - enemy.attackAt > 2400;
-      const meleeReady = !enemy.ranged && d < (enemy.boss ? 1.75 : enemy.type === 'runner' ? .72 : .82) && enemy.canSee && time - enemy.attackAt > (enemy.boss ? 1450 : enemy.type === 'runner' ? 880 : 1100);
+      const rangedReady = enemy.chase && d < 9.4 && d > (enemy.ranged ? 3.1 : 2.4) && enemy.canSee && time - enemy.shotAt > enemy.shotCooldown;
+      const dashReady = enemy.attackKind === 'dash' && d > 1.3 && d < 5.5 && enemy.canSee && time - enemy.attackAt > enemy.dashCooldown;
+      const meleeReady = !enemy.ranged && d < (enemy.boss ? 1.75 : enemy.type === 'runner' ? .72 : .82) && enemy.canSee && time - enemy.attackAt > enemy.meleeCooldown;
       if (rangedReady || dashReady || meleeReady) {
         // Lock the direction during the full windup so the attack can be read and dodged.
-        enemy.attackAt = time; if (enemy.ranged) enemy.shotAt = time;
+        enemy.attackMode = meleeReady ? 'melee' : dashReady ? 'dash' : 'shoot';
+        enemy.attackAt = time; if (enemy.attackMode === 'shoot') enemy.shotAt = time;
         enemy.attackAim = aim; enemy.chargeAngle = aim; enemy.angle = aim;
-        enemy.attackMax = enemy.windup; enemy.attackAnim = enemy.windup; enemy.attackHit = false;
+        enemy.attackTargetX = player.x; enemy.attackTargetY = player.y;
+        enemy.attackMax = enemy.attackMode === 'shoot' ? enemy.projectileWindup : enemy.windup;
+        enemy.attackAnim = enemy.attackMax; enemy.attackHit = false;
         enemy.targetX = enemy.x; enemy.targetY = enemy.y;
         tone(enemy.boss ? 82 : enemy.attackKind === 'dash' ? 290 : enemy.ranged ? 245 : 145, .08, 'triangle', .022);
       }
@@ -827,7 +866,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       let removed=b.life<=0;
       for(let part=0;part<steps&&!removed;part++) {
         const nx=b.x+b.vx*dt/steps, ny=b.y+b.vy*dt/steps;
-        if(!walkableCell(Math.floor(nx),Math.floor(ny))) {
+        if(!walkableCell(Math.floor(nx),Math.floor(ny)) || !hasLineOfSight(b.x,b.y,nx,ny)) {
           for(let p=0;p<3;p++) particles.push({x:b.x,y:b.y,vx:(Math.random()-.5)*1.5,vy:(Math.random()-.5)*1.5,life:.16,maxLife:.16,color:b.color,size:.035});
           removed=true; break;
         }
@@ -842,7 +881,40 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     }
   }
 
+  function rebuildEnemyBuckets() {
+    const width = Math.ceil(cols / 2), height = Math.ceil(rows / 2);
+    if (!enemyBucketHeads || enemyBucketCols !== width || enemyBucketRows !== height) {
+      enemyBucketCols = width; enemyBucketRows = height;
+      enemyBucketHeads = new Int16Array(width * height);
+    }
+    if (!enemyBucketNext || enemyBucketNext.length < enemies.length) enemyBucketNext = new Int16Array(Math.max(MAX_ENEMIES, enemies.length));
+    enemyBucketHeads.fill(-1);
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i];
+      if (!enemy.alive) continue;
+      const x = Math.floor(enemy.x / 2), y = Math.floor(enemy.y / 2);
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      const bucket = y * width + x;
+      enemyBucketNext[i] = enemyBucketHeads[bucket]; enemyBucketHeads[bucket] = i;
+    }
+  }
+
+  function enemyAtBullet(x, y) {
+    const minX = Math.max(0, Math.floor((x - .53) / 2)), maxX = Math.min(enemyBucketCols - 1, Math.floor((x + .53) / 2));
+    const minY = Math.max(0, Math.floor((y - .53) / 2)), maxY = Math.min(enemyBucketRows - 1, Math.floor((y + .53) / 2));
+    for (let by = minY; by <= maxY; by++) for (let bx = minX; bx <= maxX; bx++) {
+      for (let index = enemyBucketHeads[by * enemyBucketCols + bx]; index >= 0; index = enemyBucketNext[index]) {
+        const enemy = enemies[index], dx = x - enemy.x, dy = y - enemy.y;
+        const radius = enemy.boss ? .52 : .30;
+        if (enemy.alive && dx * dx + dy * dy < radius * radius) return enemy;
+      }
+    }
+    return null;
+  }
+
   function updateBullets(dt) {
+    if (!bullets.length) return;
+    rebuildEnemyBuckets();
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       let removed = false;
@@ -872,7 +944,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
           b.bounces++;
           for (let k = 0; k < 3; k++) {
             particles.push({ x: b.x, y: b.y, vx: (Math.random() - .5) * 2.5, vy: (Math.random() - .5) * 2.5,
-              life: .12 + Math.random() * .08, maxLife: .2, color: k ? b.color : '#bde6bc', size: .035 });
+              life: .12 + Math.random() * .08, maxLife: .2, color: k ? b.color : '#ffe1a0', size: .035 });
           }
           if (wallBounceCooldown <= 0) {
             tone(420 + Math.random() * 220, .035, 'square', .012);
@@ -881,7 +953,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
           if (b.bounces > b.maxBounces) { removed = true; break; }
         }
 
-        const target = enemies.find(e => e.alive && dist(b.x, b.y, e.x, e.y) < (e.boss ? .52 : .30));
+        const target = enemyAtBullet(b.x, b.y);
         if (target) {
           target.hp -= b.damage; target.flash = .12; target.hurtAt = performance.now(); removed = true;
           combatPulse = Math.max(combatPulse, .26);
@@ -894,7 +966,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
           if (target.hp <= 0) {
             target.alive = false; kills++;
             combatPulse = target.boss ? 1 : .5;
-            showFloatingText(target.x, target.y - .25, target.boss ? 'GUARDIÃO DERROTADO' : 'DERROTADO', target.boss ? '#ffd88d' : '#c6d3b0', target.boss ? 1.7 : .85);
+            showFloatingText(target.x, target.y - .25, target.boss ? 'GUARDIÃO DERROTADO' : 'DERROTADO', target.boss ? '#ffd88d' : '#e4cda2', target.boss ? 1.7 : .85);
             dropEnemyLoot(target);
             for (let n = 0; n < (target.boss ? 28 : 9); n++) particles.push({ x: target.x, y: target.y, vx: (Math.random() - .5) * 2.4, vy: (Math.random() - .5) * 2.4, life: .35 + Math.random() * .25, maxLife: .6, color: n % 2 ? '#b6ad8d' : '#7e3127', size: .04 + Math.random() * .035 });
             if (currentWeapon && ammo[currentWeapon] && Math.random() < .20) ammo[currentWeapon].reserve += currentWeapon === 'shotgun' ? 2 : currentWeapon === 'pistol' ? 5 : 9;
@@ -930,7 +1002,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       winCopy.textContent = 'Oito labirintos ficaram para trás. A chama ainda vive — por enquanto.';
       nextButton.innerHTML = 'Jogar campanha novamente <span>↻</span>';
     } else {
-      saveCampaign({ stage: stage + 1, difficulty, kills, elapsed, health: Math.min(100, health + 20), inventory: [...weaponInventory], currentWeapon, ammo, completedStages: stage });
+      saveCampaign({ stage: stage + 1, difficulty, combatDifficulty, kills, elapsed, health: Math.min(100, health + 20), inventory: [...weaponInventory], currentWeapon, ammo, completedStages: stage });
       const checkpoint = loadCampaignSave(); if (checkpoint && titleContinueButton) { titleContinueButton.classList.remove('hidden'); titleContinueButton.innerHTML = `CONTINUAR CAMPANHA · FASE ${String(checkpoint.stage).padStart(2,'0')} <span>↗</span>`; }
       winHeadline.innerHTML = 'Você encontrou<br /><em>a passagem.</em>';
       winCopy.textContent = `Fase ${stage} concluída. Seu progresso foi salvo. A próxima região terá novas ameaças.`;
@@ -1111,11 +1183,12 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   soundSetting?.addEventListener('change', () => { soundOn = soundSetting.checked; settings.sound = soundOn; if (soundButton) { soundButton.classList.toggle('sound-muted', !soundOn); soundButton.textContent = soundOn ? '♫' : '♪̸'; } persistSettings(); if (soundOn) tone(660,.06,'sine',.03); });
   volumeSetting?.addEventListener('input', () => { settings.volume = Number(volumeSetting.value); audioPlayer.setVolume(settings.volume); persistSettings(); });
   brightnessSetting?.addEventListener('input', () => { brightness = Number(brightnessSetting.value); settings.brightness = brightness; persistSettings(); });
-  motionSetting?.addEventListener('change', () => { reducedMotion = motionSetting.checked; settings.reducedMotion = reducedMotion; titleScene.setReducedMotion(reducedMotion); document.body.dataset.reducedMotion = String(reducedMotion); persistSettings(); });
+  motionSetting?.addEventListener('change', () => { reducedMotion = motionSetting.checked; settings.reducedMotion = reducedMotion; titleScene.setReducedMotion(reducedMotion); selectionScene.setReducedMotion(reducedMotion); document.body.dataset.reducedMotion = String(reducedMotion); persistSettings(); });
   graphicsQualitySetting?.addEventListener('change', () => { graphicsQuality = graphicsQualitySetting.value; persistSettings(); lastIdleDraw = -Infinity; });
   fpsSetting?.addEventListener('change', () => { showFps = fpsSetting.checked; fpsFrames = 0; fpsWindowStart = 0; persistSettings(); });
   startButton.addEventListener('click',() => newGame(true));
   resumeButton.addEventListener('click',() => togglePause(false));
+  pauseMenuButton?.addEventListener('click', returnToMenu);
   nextButton.addEventListener('click',nextLevel);
   retryButton.addEventListener('click', retryStage);
   restartButton.addEventListener('click',() => newGame(true));
@@ -1127,6 +1200,11 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     if (soundOn) tone(660,.06,'sine',.03);
   });
   weaponButtons.forEach(button => button.addEventListener('click',() => setWeapon(button.dataset.weapon)));
+  hudWeaponButtons.forEach(button => button.addEventListener('click', () => {
+    if (!running || paused || settingsOpen || won || dead) return;
+    setWeapon(button.dataset.hudWeapon);
+    canvas.focus({ preventScroll: true });
+  }));
   difficultySelect.addEventListener('change',() => {
     const settings = DIFFICULTIES[difficultySelect.value]; levelLabel.textContent = `${settings.label} · 01/${MAX_STAGES}`;
   });
@@ -1134,7 +1212,13 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   window.addEventListener('resize',() => renderer.resizeCanvas());
 
   function frame(time) {
-    if (document.hidden || !titleScreen.classList.contains('is-hidden')) {
+    const titleVisible = !titleScreen.classList.contains('is-hidden');
+    const selectionActive = !document.hidden && !titleVisible && !startOverlay.classList.contains('hidden') && !settingsOpen;
+    if (selectionActive !== selectionSceneActive) {
+      selectionSceneActive = selectionActive;
+      selectionScene.setActive?.(selectionActive);
+    }
+    if (document.hidden || titleVisible || selectionActive) {
       lastFrame = time; fpsFrames = 0; fpsWindowStart = 0;
       performanceReadout?.classList.add('hidden');
       requestAnimationFrame(frame); return;

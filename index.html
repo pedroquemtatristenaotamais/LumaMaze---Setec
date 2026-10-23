@@ -76,24 +76,67 @@
               <div class="hud-health-head"><span>VIDA</span><strong id="hudHealthValue">100%</strong></div>
               <div class="hud-health-track"><div id="hudHealthBar"></div></div>
             </div>
-            <div class="hud-ammo" aria-live="polite">
-              <span id="hudWeaponName">TOCHA</span>
-              <strong id="hudAmmoCount">— / —</strong>
+            <div class="hud-combat">
+              <div class="hud-weapon-selector" role="group" aria-label="Selecionar arma">
+                <button class="hud-weapon-row is-locked" type="button" data-hud-weapon="ak" disabled aria-disabled="true" aria-pressed="false" aria-label="AK-47 indisponível. Encontre esta arma no labirinto.">
+                  <kbd>3</kbd>
+                  <svg class="hud-gun-icon" viewBox="0 0 120 42" aria-hidden="true"><path d="M3 13h20l6-4h28V6h9v4h31v4h20v5H96v3H70l-2 5 10 10-10 2-13-15H42l-4 11-9-3 4-10H18L5 29H1l4-10H3z"/><path d="M74 23h10l6 13-9 3-6-8z"/></svg>
+                  <span class="hud-weapon-copy"><strong>AK-47</strong><small data-hud-weapon-state>Não encontrada</small></span>
+                  <span class="hud-row-ammo" data-hud-ammo>—</span>
+                </button>
+                <button class="hud-weapon-row is-locked" type="button" data-hud-weapon="shotgun" disabled aria-disabled="true" aria-pressed="false" aria-label="Shotgun indisponível. Encontre esta arma no labirinto.">
+                  <kbd>2</kbd>
+                  <svg class="hud-gun-icon" viewBox="0 0 120 42" aria-hidden="true"><path d="M3 13h22l9-4h80v6H69v4H50l-6 4-7-2-9 11H17l8-13H14L5 26H1l4-9H3z"/><path d="M64 16h32v6H64zM39 22h8l-3 11-8-2z"/></svg>
+                  <span class="hud-weapon-copy"><strong>SHOTGUN</strong><small data-hud-weapon-state>Não encontrada</small></span>
+                  <span class="hud-row-ammo" data-hud-ammo>—</span>
+                </button>
+                <button class="hud-weapon-row is-locked" type="button" data-hud-weapon="pistol" disabled aria-disabled="true" aria-pressed="false" aria-label="Pistola indisponível. Encontre esta arma no labirinto.">
+                  <kbd>1</kbd>
+                  <svg class="hud-gun-icon hud-gun-pistol" viewBox="0 0 120 42" aria-hidden="true"><path d="M30 8h62v10H69l-5 5H53l-6 16H30l8-21h-8z"/><path d="M55 20h14v9H54v-4h10v-3h-9z"/></svg>
+                  <span class="hud-weapon-copy"><strong>PISTOLA</strong><small data-hud-weapon-state>Não encontrada</small></span>
+                  <span class="hud-row-ammo" data-hud-ammo>—</span>
+                </button>
+              </div>
+              <div class="hud-ammo" aria-live="polite">
+                <span id="hudWeaponName">TOCHA</span>
+                <strong id="hudAmmoCount">— / —</strong>
+                <small>MUNIÇÃO <span>R · RECARREGAR</span></small>
+              </div>
             </div>
           </div>
 
           <div class="overlay" id="startOverlay">
+            <canvas id="startFxCanvas" class="title-scene selection-scene" aria-hidden="true"></canvas>
+            <div class="selection-scene-shade" aria-hidden="true"></div>
+            <div class="expedition-content">
             <p class="overlay-kicker">A DESCIDA COMEÇA AQUI</p>
             <h2>Escolha a sua<br /><em>escuridão.</em></h2>
             <p class="overlay-description">Oito fases. Uma última chama. Encontre armas, descubra passagens e alcance a saída.</p>
-            <label class="difficulty-label" for="difficultySelect">TAMANHO DO LABIRINTO</label>
-            <div class="select-wrap">
-              <select id="difficultySelect" aria-describedby="sizeGuide">
-                <option value="easy">Catacumbas · pequeno</option>
-                <option value="normal" selected>Cripta · médio</option>
-                <option value="hard">Abismo · grande</option>
-              </select>
-              <span>⌄</span>
+            <div class="expedition-selectors">
+              <div class="expedition-select-field">
+                <label class="difficulty-label" for="difficultySelect">TAMANHO DO LABIRINTO</label>
+                <div class="select-wrap">
+                  <select id="difficultySelect" aria-describedby="sizeGuide mazeSizeHint">
+                    <option value="easy">Catacumbas · pequeno</option>
+                    <option value="normal" selected>Cripta · médio</option>
+                    <option value="hard">Abismo · grande</option>
+                  </select>
+                  <span>⌄</span>
+                </div>
+                <p class="selector-hint" id="mazeSizeHint">Define a extensão e os caminhos das ruínas.</p>
+              </div>
+              <div class="expedition-select-field">
+                <label class="difficulty-label" for="combatDifficultySelect">DIFICULDADE DOS INIMIGOS</label>
+                <div class="select-wrap">
+                  <select id="combatDifficultySelect" aria-describedby="combatDifficultyHint">
+                    <option value="easy">Fácil</option>
+                    <option value="normal" selected>Médio</option>
+                    <option value="hard">Difícil</option>
+                  </select>
+                  <span>⌄</span>
+                </div>
+                <p class="selector-hint" id="combatDifficultyHint">Ajusta quantidade, velocidade e agressividade dos inimigos.</p>
+              </div>
             </div>
             <div class="size-guide" id="sizeGuide">
               <div class="size-choice size-easy"><span>01 / PEQUENO</span><strong>Catacumbas</strong><p>Rotas curtas.<br />Seu primeiro mergulho.</p></div>
@@ -109,6 +152,7 @@
               <p><kbd>O</kbd><span>Ajustes</span></p>
               <p><kbd>ESPAÇO</kbd><span>Pausar</span></p>
             </div>
+            </div>
           </div>
 
           <div class="overlay overlay-small hidden" id="pauseOverlay">
@@ -116,6 +160,7 @@
             <p class="overlay-kicker">PAUSA</p>
             <h2>Respire.<br /><em>Recalcule.</em></h2>
             <button id="resumeButton" class="primary-button" type="button">Continuar <span>→</span></button>
+            <button id="pauseMenuButton" class="secondary-button" type="button">Voltar ao menu <span aria-hidden="true">↩</span></button>
             <p class="keyboard-hint">Pressione <kbd>ESPAÇO</kbd> para voltar</p>
           </div>
 
