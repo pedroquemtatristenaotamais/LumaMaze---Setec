@@ -9,10 +9,13 @@ export const MAX_STAGES = 8;
 export const PLAYER_MOVE_SPEED = 4.4; // 10% above the original 4 tiles/second.
 
 // Combat is independent of DIFFICULTIES, which continues to describe map sizes.
+// Global enemy tuning: 25% faster movement and 30% more damage in every mode.
+const ENEMY_SPEED_BOOST = 1.25;
+const ENEMY_DAMAGE_BOOST = 1.30;
 export const COMBAT_DIFFICULTIES = {
-  easy: { label: 'FÁCIL', density: .72, speed: 1.15, damage: .58, health: .82, cooldown: .90, projectileSpeed: .95, windup: 1.12 },
-  normal: { label: 'MÉDIO', density: 1, speed: 1.45, damage: .85, health: 1, cooldown: .70, projectileSpeed: 1.10, windup: 1 },
-  hard: { label: 'DIFÍCIL', density: 1.25, speed: 1.75, damage: 1.15, health: 1.12, cooldown: .55, projectileSpeed: 1.20, windup: .88 }
+  easy: { label: 'FÁCIL', density: .72, speed: 1.15 * ENEMY_SPEED_BOOST, damage: .58 * ENEMY_DAMAGE_BOOST, health: .82, cooldown: .90, projectileSpeed: .95, windup: 1.12 },
+  normal: { label: 'MÉDIO', density: 1, speed: 1.45 * ENEMY_SPEED_BOOST, damage: .85 * ENEMY_DAMAGE_BOOST, health: 1, cooldown: .70, projectileSpeed: 1.10, windup: 1 },
+  hard: { label: 'DIFÍCIL', density: 1.25, speed: 1.75 * ENEMY_SPEED_BOOST, damage: 1.15 * ENEMY_DAMAGE_BOOST, health: 1.12, cooldown: .55, projectileSpeed: 1.20, windup: .88 }
 };
 
 export const WEAPONS = {

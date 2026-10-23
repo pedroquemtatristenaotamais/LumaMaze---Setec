@@ -1,5 +1,30 @@
 # Verificação — 23/10/2026
 
+## Expansão de combate, gráficos e coleção
+
+Esta seção cobre a expansão atual. Os benchmarks e registros de navegador mais abaixo são de uma versão anterior e **não medem os novos encontros com até 160 inimigos**.
+
+Foi mantida a distribuição estática, sem dependências novas, build ou serviços externos. Os novos arquivos de execução são `actor-sprites.js` e `progression.js`. O cenário e a abertura conservaram a paleta; raridades usam nomes e uma a quatro marcas.
+
+Verificações da expansão:
+
+- Execução final de `npm test`: **77 testes aprovados, zero falhas**, em aproximadamente 12 segundos. Sintaxe de todos os módulos de execução válida; HTML com 73 IDs únicos e tags balanceadas.
+- Testes executam a lógica real de jogo em um ambiente DOM/áudio/Canvas substituído somente nas fronteiras externas. O acesso de inspeção é injetado na cópia usada pelos testes, sem API de teste no produto.
+- Geração de anexos, chaves, altar e saída exercitada nos três tamanhos, nas oito fases e com duas sementes: **48 combinações**. Chaves opcionais e altar permanecem acessíveis com todas as portas fechadas; bosses aparecem nos marcos corretos.
+- Casos de integração verificam recompensa única, morte visual sem combate, coleção após morte/nova campanha, checkpoint de pontuação/armas, tiros hostis de 20–24 células/s bloqueados por paredes, fúria de boss, reforços válidos com limite160 e recompensa mínima épica do boss final.
+- Testes de Canvas exercitam armas e recarga, distinção de silhuetas, equipamento, restos animados, antecipação em leque, origem de brasas, alinhamento do altar e reduzir movimento.
+- Testes de progressão cobrem probabilidades 60/27/10/3, mínimos de raridade, duplicatas, itens equipáveis, bônus limitados, persistência independente, armazenamento indisponível/corrompido e sequência de pontos com expiração.
+- A revisão independente reproduziu um ritual travado por inimigos em caminhos de 68 células, perda de foco ao equipar e pontuação após morte. As regressões agora exercitam 30 segundos de perseguição real, foco após equipar/retirar, limite de 12 partículas em reduzir movimento e o quadro real de dano letal sem recompensas posteriores. Reforços usam caminhos frescos de 4–10 células.
+- Servidor local respondeu HTTP200 para HTML, CSS, `game.js`, `renderer.js`, `actor-sprites.js` e `progression.js`; sintaxe dos módulos de execução conferida com `node --check`.
+
+Prévia estática dos sprites reais: [previa-combate.png](previa-combate.png). A prancha é gerada a partir dos comandos Canvas efetivamente emitidos pelos sprites e rasterizada fora do navegador; permite conferir as formas, sem reproduzir a iluminação completa do jogo.
+
+**Limite desta sessão:** o inventário de navegadores está vazio e o navegador integrado está indisponível. Portanto, a composição final da interface em desktop/celular, animações em tempo real e desempenho durante combate denso ainda precisam de conferência em navegador. Nenhum resultado antigo de FPS é apresentado como validação desta expansão.
+
+Resultados da revisão e execução ficam em `docs/superpowers/plans/2026-10-23-expansao-progress.md` e nos relatórios ao lado dele. O comando de verificação continua sendo `npm test`.
+
+## Registros anteriores à expansão
+
 ## Resultado
 
 Implementação local verificada em Chrome headless, HTML/CSS/JavaScript sem bibliotecas de execução. O projeto roda com `npm start` em `http://localhost:8080`. Nenhuma publicação externa foi feita.

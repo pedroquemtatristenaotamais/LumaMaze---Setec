@@ -519,3 +519,65 @@ button:focus-visible,select:focus-visible,input:focus-visible { outline:2px soli
   .title-screen,.title-screen *,#startOverlay *, .hud-weapon-row { animation:none !important; transition:none !important; }
   .hud-health-track div[data-level="critical"] { animation:none; }
 }
+
+/* Expedition controls reuse the original ochre, ember and stone palette. */
+.expedition-hud { display:none;position:absolute;z-index:2;left:clamp(12px,2vw,30px);top:clamp(44px,6vh,66px);gap:12px;align-items:flex-start;pointer-events:none;font-family:var(--mono);color:var(--text);text-shadow:0 2px 5px #000; }
+.playing .expedition-hud { display:flex; }
+.expedition-score,.expedition-keyring { display:flex;flex-direction:column;gap:5px;padding:10px 13px;background:var(--panel);border-left:2px solid var(--fire); }
+.expedition-score>span { font-size:9px;letter-spacing:1.4px;color:var(--muted); }
+.expedition-score>strong { font-size:25px;line-height:1; }
+.expedition-score>small,.expedition-keyring>small { font-size:10px;color:var(--fire-bright); }
+.expedition-keyring { max-width:240px;line-height:1.5;font-size:11px;border-left-color:var(--muted); }
+.collection-open,.collection-close { pointer-events:auto;border:1px solid var(--line);background:var(--panel);color:var(--fire-bright);padding:11px 12px;min-height:42px;font:700 12px var(--mono); }
+.collection-open span { margin-left:6px;font-size:10px; }
+.collection-open:hover,.collection-close:hover { border-color:var(--fire); }
+.collection-overlay { z-index:6;align-items:stretch;justify-content:flex-start;overflow-y:auto;background:var(--panel-deep);text-align:left; }
+.collection-header { display:flex;justify-content:space-between;align-items:center;gap:20px;max-width:1100px;width:100%;margin:0 auto 25px; }
+.collection-header h2 { font-size:clamp(30px,4vw,47px); }
+.collection-layout { display:grid;grid-template-columns:245px 1fr;gap:30px;max-width:1100px;width:100%;margin:0 auto; }
+.collection-character { border-right:1px solid var(--line);padding-right:20px; }
+.collection-character canvas { display:block;max-width:100%;image-rendering:pixelated; }
+.collection-character>strong { font:11px var(--mono);color:var(--fire-bright); }
+#collectionBonuses { font:11px/1.9 var(--mono);color:var(--text); }
+.collection-note { font:11px/1.8 var(--mono);color:var(--muted);max-width:450px; }
+.collection-rarities { font:10px/2 var(--mono);color:var(--fire-bright); }
+.collection-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-content:start;padding-bottom:20px; }
+.collection-item { display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:12px;min-height:128px;padding:14px 12px;border:1px solid var(--line);border-radius:2px;background:var(--panel);color:var(--text); }
+.collection-item strong { font-size:12px;line-height:1.6;color:var(--fire-bright); }
+.collection-item span { font-size:10px;color:var(--muted); }
+.collection-item small { margin-top:auto;font-size:9px;line-height:1.6; }
+.collection-item:disabled { opacity:.45;cursor:default; }
+.collection-item.is-equipped { border-color:var(--fire-bright);box-shadow:inset 3px 0 var(--fire); }
+.collection-item:focus-visible,.collection-close:focus-visible,.collection-open:focus-visible { outline:2px solid var(--fire-bright);outline-offset:3px; }
+@media (pointer:coarse) {
+  .canvas-wrap.playing .touch-controls { display:flex!important;position:absolute;z-index:2;left:14px;bottom:125px;flex-direction:column;gap:5px;align-items:center;padding:0; }
+  .touch-controls button { width:32px;height:32px;font-size:14px; }
+  .touch-controls .touch-actions { display:flex;gap:3px;margin-top:4px; }
+  .touch-actions button { width:26px;font-size:12px; }
+  .touch-actions .touch-fire { width:48px;font-size:9px; }
+  .hud-combat { width:150px;gap:6px; }
+  .hud-weapon-row { min-height:40px;grid-template-columns:10px 26px 1fr 26px;gap:4px;padding:5px; }
+  .hud-weapon-row kbd,.hud-weapon-copy strong { font-size:10px; }
+  .hud-weapon-copy small { font-size:8px; }
+  .hud-row-ammo { font-size:9px; }
+  .hud-ammo { padding:7px; }
+  .hud-ammo>strong { font-size:23px; }
+  .hud-ammo>small { font-size:8px; }
+}
+@media (max-width:700px) {
+  .expedition-hud { gap:6px;top:48px;right:12px;flex-wrap:wrap; }
+  .expedition-score,.expedition-keyring { padding:7px 9px; }
+  .expedition-score>strong { font-size:20px; }
+  .expedition-keyring { font-size:9px;max-width:130px; }
+  .collection-open { padding:9px;min-height:36px; }
+  .collection-open span { display:none; }
+  .collection-layout { grid-template-columns:1fr;gap:12px; }
+  .collection-character { border-right:0;border-bottom:1px solid var(--line);padding:0 0 10px; }
+  .collection-character canvas { width:160px;height:120px;float:left; }
+  .collection-header { margin-bottom:12px;gap:10px; }
+  .collection-close { padding:10px 7px;font-size:10px; }
+  .collection-grid { grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }
+  .collection-item { min-height:125px;padding:10px; }
+  .collection-item strong { font-size:11px; }
+}
+@media (pointer:coarse) and (max-width:380px) { .hud-combat { width:135px; } }

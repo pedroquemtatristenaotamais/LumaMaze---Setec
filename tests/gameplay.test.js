@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { makeMaze, widenMaze } from '../maze-generator.js';
 import * as config from '../config.js';
-import { createEnemy, chooseEnemyType } from '../enemy-types.js';
+import { createEnemy, chooseEnemyType, getBossType } from '../enemy-types.js';
 
 const navigation = await import('../pathfinding.js').catch(() => ({}));
 const combat = await import('../combat-difficulty.js').catch(() => ({}));
@@ -106,7 +106,8 @@ function functionSource(source, name) {
 test('switching guns cancels a pending reload before it can fill the wrong magazine', async () => {
   const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
   const run = new Function('WEAPONS', `
-    let running=true, paused=false, reloadTimer=0, currentWeapon='pistol';
+    let running=true, paused=false, settingsOpen=false,collectionOpen=false,won=false,dead=false,reloadDuration=0,reloadTimer=0, currentWeapon='pistol';
+    const equipmentBonuses={reload:0};
     const weaponInventory=new Set(['pistol','ak']);
     const ammo={pistol:{mag:0,reserve:12},ak:{mag:1,reserve:30}};
     const gameStatus={textContent:''}, tone=()=>{}, updateWeaponUI=()=>{}, showPickupToast=()=>{}, setTimeout=()=>{};
@@ -177,9 +178,9 @@ test('melee windups cannot damage a player through a diagonal wall corner', asyn
 test('regional encounters appear from the first stage and keep a safe start and weapon radius', async () => {
   const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
   const { isBossStage } = await import('../enemy-types.js');
-  const run = new Function('maze', 'stage', 'createEnemy', 'chooseEnemyType', 'isBossStage', 'getEnemyCount', `
+  const run = new Function('maze', 'stage', 'createEnemy', 'chooseEnemyType', 'isBossStage', 'getEnemyCount', 'getBossType', `
     const cols=maze[0].length, rows=maze.length, player={x:8.5,y:8.5}, exit={x:cols-9,y:rows-9};
-    const difficulty='normal',combatDifficulty='normal',secretRooms=[],MAX_ENEMIES=96;
+    const difficulty='normal',combatDifficulty='normal',secretRooms=[],MAX_ENEMIES=160;
     const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by),randInt=max=>Math.floor(Math.random()*max);
     let enemies=[],weaponPickups=[];
     ${['openCells', 'placeWeaponPickups', 'spawnEnemies'].map(name => functionSource(source, name)).join('\n')}
@@ -190,8 +191,8 @@ test('regional encounters appear from the first stage and keep a safe start and 
     const built = widenMaze(makeMaze(49, 37, stage, 99));
     const maze = Array.from({length: built.length + 12}, () => Array(built[0].length + 12).fill(1));
     for (let y = 0; y < built.length; y++) for (let x = 0; x < built[0].length; x++) maze[y + 6][x + 6] = built[y][x];
-    const { enemies, weaponPickups } = run(maze, stage, createEnemy, chooseEnemyType, isBossStage, combat.getEnemyCount);
-    assert.ok(enemies.length > 10 && enemies.length <= 96);
+    const { enemies, weaponPickups } = run(maze, stage, createEnemy, chooseEnemyType, isBossStage, combat.getEnemyCount,getBossType);
+    assert.ok(enemies.length > 10 && enemies.length <= 160);
     assert.ok(enemies.some(enemy => enemy.type === 'emberling'), 'a chapel encounter must not depend on rare random placement');
     if (stage >= 2) assert.ok(enemies.some(enemy => enemy.type === 'wraith'));
     for (const enemy of enemies) {
@@ -249,7 +250,7 @@ test('combat profiles increase enemy pressure without changing the map dimension
   assert.ok(combat.getEnemyCount(90, 70, 1, 'easy') < medium);
   assert.ok(combat.getEnemyCount(90, 70, 1, 'hard') > medium);
   assert.ok(combat.getEnemyCount(90, 70, 5, 'normal') > medium);
-  assert.equal(combat.getEnemyCount(166, 114, 8, 'hard'), 96);
+  assert.equal(combat.getEnemyCount(166, 114, 8, 'hard'), 160);
   for (const type of ['skeleton', 'warrior', 'runner', 'wraith', 'archer', 'emberling']) {
     const easy = createEnemy(type, 1, 1, 3, () => .5, 'easy');
     const normal = createEnemy(type, 1, 1, 3, () => .5, 'normal');
@@ -279,7 +280,7 @@ test('every regular enemy class visibly winds up a projectile attack in open sig
 test('returning to the main menu stops combat, preserves checkpoint and selections, and restores title focus', async () => {
   const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
   const run = new Function(`
-    let running=true,paused=true,settingsOpen=true,pausedBeforeSettings=true,won=false,dead=false;
+    let running=true,paused=true,settingsOpen=true,pausedBeforeSettings=true,won=false,dead=false,collectionOpen=false;
     let mouseHeld=true,lastMouse={active:true},fireCooldown=20,reloadTimer=1,damageCooldown=.5,hitFlash=.2;
     let bullets=[{}],hostileBullets=[{}],particles=[{}],floatingTexts=[{}],combatPulse=1,showMap=true;
     let lastIdleDraw=0,checkpoint={stage:3,difficulty:'hard',combatDifficulty:'easy'};
@@ -287,7 +288,8 @@ test('returning to the main menu stops combat, preserves checkpoint and selectio
     const difficultySelect={value:'hard'},combatDifficultySelect={value:'easy'};
     const classes=()=>({values:new Set(),add(value){this.values.add(value);},remove(value){this.values.delete(value);},contains(value){return this.values.has(value);}});
     const overlay=()=>({classList:classes(),inert:false,setAttribute(){},removeAttribute(){}});
-    const startOverlay=overlay(),pauseOverlay=overlay(),winOverlay=overlay(),deadOverlay=overlay(),settingsOverlay=overlay();
+    const startOverlay=overlay(),pauseOverlay=overlay(),winOverlay=overlay(),deadOverlay=overlay(),settingsOverlay=overlay(),collectionOverlay=overlay();
+    const persistCollection=()=>{};
     const titleScreen=overlay(),canvasWrap=overlay(),appShell={inert:false},pauseButton={disabled:false,textContent:''},gameStatus={textContent:''};
     titleScreen.classList.add('is-hidden');titleScreen.inert=true;canvasWrap.classList.add('playing');
     let focused='canvas',threat=1;

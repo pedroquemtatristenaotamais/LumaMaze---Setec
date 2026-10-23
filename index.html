@@ -71,6 +71,12 @@
           <canvas id="mazeCanvas" aria-label="Labirinto macabro em pixel art. Explore as catacumbas, encontre armas e use tiros que ricocheteiam nas paredes." role="img"></canvas>
           <div class="canvas-vignette"></div>
           <output id="performanceReadout" class="performance-readout hidden" aria-label="Desempenho do jogo"></output>
+          <div class="expedition-hud" aria-label="Progresso da expedição">
+            <div class="expedition-score"><span>PONTUAÇÃO</span><strong id="scoreValue">0</strong><small id="comboValue">RECORDЕ 0</small></div>
+            <div class="expedition-keyring"><span id="keyringValue">CHAVES · —</span><small id="expeditionProgress">FASE 01 / 08</small></div>
+            <button id="collectionButton" class="collection-open" type="button" aria-label="Abrir coleção e personalizar personagem">I <span>COLEÇÃO</span></button>
+            <button id="hudPauseButton" class="collection-open" type="button" aria-label="Pausar jogo">Ⅱ <span>PAUSAR</span></button>
+          </div>
           <div class="minimal-hud" aria-label="Estado do personagem">
             <div class="hud-vitals">
               <div class="hud-health-head"><span>VIDA</span><strong id="hudHealthValue">100%</strong></div>
@@ -161,6 +167,7 @@
             <h2>Respire.<br /><em>Recalcule.</em></h2>
             <button id="resumeButton" class="primary-button" type="button">Continuar <span>→</span></button>
             <button id="pauseMenuButton" class="secondary-button" type="button">Voltar ao menu <span aria-hidden="true">↩</span></button>
+            <button id="pauseCollectionButton" class="secondary-button" type="button">Coleção e personagem <span aria-hidden="true">I</span></button>
             <p class="keyboard-hint">Pressione <kbd>ESPAÇO</kbd> para voltar</p>
           </div>
 
@@ -169,7 +176,7 @@
             <p class="overlay-kicker">VOCÊ SOBREVIVEU</p>
             <h2 id="winHeadline">Você escapou<br /><em>da escuridão.</em></h2>
             <p class="overlay-description" id="winCopy">A saída foi encontrada. A chama ainda vive.</p>
-            <div class="win-stats"><div><span>TEMPO</span><strong id="finalTime">00:00</strong></div><div><span>BRASAS</span><strong id="finalCoins">0/0</strong></div></div>
+            <div class="win-stats"><div><span>TEMPO</span><strong id="finalTime">00:00</strong></div><div><span>BRASAS</span><strong id="finalCoins">0/0</strong></div><div><span>PONTOS</span><strong id="finalScore">0</strong></div></div>
             <button id="nextButton" class="primary-button" type="button">Entrar na próxima fase <span>→</span></button>
           </div>
 
@@ -178,8 +185,17 @@
             <p class="overlay-kicker">A CHAMA SE APAGOU</p>
             <h2>Os mortos<br /><em>te encontraram.</em></h2>
             <p class="overlay-description">O último marco está salvo entre fases. Tente outra rota e proteja a chama.</p>
+            <p id="deathScore" class="collection-note"></p>
             <button id="retryButton" class="primary-button" type="button">Tentar novamente <span>↻</span></button>
           </div>
+
+          <section class="overlay collection-overlay hidden" id="collectionOverlay" role="dialog" aria-modal="true" aria-labelledby="collectionTitle">
+            <div class="collection-header"><div><p class="overlay-kicker">RECOMPENSAS DA EXPLORAÇÃO</p><h2 id="collectionTitle">Sua <em>coleção.</em></h2></div><button id="closeCollectionButton" class="collection-close" type="button" aria-label="Fechar coleção">VOLTAR · I / ESC</button></div>
+            <div class="collection-layout">
+              <div class="collection-character"><canvas id="collectionPreview" width="240" height="180" aria-label="Prévia do personagem com os equipamentos selecionados"></canvas><strong id="collectionTotal">0 / 12 DESCOBERTOS</strong><p id="collectionBonuses"></p><p id="collectionStorage" class="collection-note"></p><p class="collection-note">Clique em uma peça para equipar ou retirar. Baús, inimigos, rituais e bosses revelam itens aleatórios.</p><p class="collection-rarities">✦ COMUM<br />✦✦ RARO<br />✦✦✦ ÉPICO<br />✦✦✦✦ LENDÁRIO</p></div>
+              <div id="collectionItems" class="collection-grid" aria-label="Equipamentos desbloqueados"></div>
+            </div>
+          </section>
 
           <div class="overlay overlay-small hidden settings-overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
             <p class="overlay-kicker">AJUSTES DA EXPLORAÇÃO</p>
@@ -224,7 +240,7 @@
             <div class="mini-stat"><div class="mini-icon steps-icon">⌁</div><span class="stat-label">DISTÂNCIA</span><strong id="stepCount">0</strong></div>
           </div>
           <div class="health-block"><div class="health-line"><span class="stat-label">VIDA</span><strong id="healthValue">100%</strong></div><div class="health-track"><div id="healthBar"></div></div></div>
-          <div class="combat-line"><span>ESQUELETOS ELIMINADOS <b id="killCount">0</b></span><span>ATIVOS <b id="enemyCount">0</b></span></div>
+          <div class="combat-line"><span>INIMIGOS ELIMINADOS <b id="killCount">0</b></span><span>ATIVOS <b id="enemyCount">0</b></span></div>
         </div>
 
         <div class="controls-card">

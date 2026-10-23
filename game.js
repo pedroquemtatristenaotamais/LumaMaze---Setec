@@ -4,10 +4,12 @@ import { createAudioPlayer } from './audio.js';
 import { createRenderer } from './renderer.js';
 import { createTitleScene } from './title-scene.js';
 import { createHUD } from './hud.js';
-import { isBossStage, createEnemy, chooseEnemyType } from './enemy-types.js';
+import { isBossStage, createEnemy, chooseEnemyType, getBossType } from './enemy-types.js';
 import { createDistanceField } from './pathfinding.js';
 import { getEnemyCount, resolveCombatDifficulty } from './combat-difficulty.js';
 import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSettings } from './save-system.js';
+import { ITEM_CATALOG, RARITIES, loadCollection, saveCollection, rollEquipment, unlockEquipment, equipItem, getEquipmentBonuses, addScore } from './progression.js';
+import { drawTraveler } from './actor-sprites.js';
 
 (() => {
   'use strict';
@@ -61,7 +63,20 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   const hudWeaponButtons = [...document.querySelectorAll('[data-hud-weapon]')];
   const winHeadline = $('winHeadline');
   const winCopy = $('winCopy');
-
+  const collectionOverlay = $('collectionOverlay');
+  const collectionItems = $('collectionItems');
+  const collectionPreview = $('collectionPreview');
+  let collectionOpen = false;
+  let collection = loadCollection();
+  let collectionSaved = true;
+  let equipmentBonuses = getEquipmentBonuses(collection);
+  let equipment = getEquippedStyles();
+  let scoreState = { score: 0, best: collection.best, combo: 0, comboUntil: 0 };
+  let vaultKeys = new Set();
+  let challenge = null;
+  let interactionHint = '';
+  let fireAnim = 0;
+  let reloadDuration = 0;
 
   let maze = [];
   let cols = 29;
@@ -133,7 +148,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   let enemyBucketCols = 0;
   let enemyBucketRows = 0;
   const hudValues = {};
-  const MAX_ENEMIES = 96;
+  const MAX_ENEMIES = 160;
   const MAX_BULLETS = 96;
   const MAX_HOSTILE_BULLETS = 128;
   const MAX_PARTICLES = 320;
@@ -156,7 +171,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   const hud = createHUD(document);
   const renderer = createRenderer({
     canvas, canvasWrap,
-    getState: () => ({ maze, cols, rows, player, exit, coins, weaponPickups, lootPickups, secretDoors, enemies, bullets, hostileBullets, particles, floatingTexts, combatPulse, pickupToast, pickupToastUntil, hitFlash, hasKey, objectiveText, showMap, brightness, reducedMotion, graphicsQuality })
+    getState: () => ({ maze, cols, rows, player, exit, coins, weaponPickups, lootPickups, secretDoors, enemies, bullets, hostileBullets, particles, floatingTexts, combatPulse, pickupToast, pickupToastUntil, hitFlash, hasKey, objectiveText, showMap, brightness, reducedMotion, graphicsQuality, currentWeapon, reloadTimer, reloadDuration, fireAnim, equipment, score:scoreState.score, combo:scoreState.combo, comboUntil:scoreState.comboUntil, vaultKeys:[...vaultKeys], challenge, interactionHint })
   });
   const titleScene = createTitleScene({ canvas: $('titleFxCanvas'), screen: titleScreen, getReducedMotion: () => reducedMotion });
   const selectionScene = createTitleScene({ canvas: $('startFxCanvas'), screen: startOverlay, variant: 'selection', getReducedMotion: () => reducedMotion });
@@ -167,6 +182,74 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   const randInt = max => Math.floor(Math.random() * max);
   const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
   const cellKey = (x, y) => `${x},${y}`;
+
+  function getEquippedStyles() {
+    return Object.fromEntries(['head','body','charm'].map(slot => [slot, ITEM_CATALOG.find(item => item.id === collection.equipped[slot])?.style || null]));
+  }
+
+  function persistCollection() {
+    collection.best = Math.max(collection.best || 0, scoreState.best);
+    collectionSaved = saveCollection(collection);
+    return collectionSaved;
+  }
+
+  function awardPoints(base, comboKill = false) {
+    const points = addScore(scoreState, base, elapsed, comboKill);
+    if (scoreState.best > collection.best) persistCollection();
+    return points;
+  }
+
+  function awardEquipment(minRarity = 0) {
+    const item = rollEquipment(Math.random, minRarity);
+    const fresh = unlockEquipment(collection, item.id);
+    if (!fresh) awardPoints(150);
+    else if (!collection.equipped[item.slot]) {
+      equipItem(collection,item.id);
+      equipmentBonuses = getEquipmentBonuses(collection); equipment = getEquippedStyles();
+    }
+    persistCollection();
+    const rarity = RARITIES.find(value => value.id === item.rarity);
+    showPickupToast(`${fresh ? 'NOVO EQUIPAMENTO' : 'ITEM REPETIDO · +150 PONTOS'} · ${item.name.toUpperCase()} · ${rarity.name.toUpperCase()} · I: COLEÇÃO`, 3400);
+    showFloatingText(player.x,player.y,`${rarity.marks} ${item.name}`, '#f2d686',1.8);
+    tone(620,.13,'triangle',.035);tone(840,.18,'sine',.025);
+    return item;
+  }
+
+  function renderCollection() {
+    if (!collectionItems) return;
+    const focusedItem=collectionItems.contains(document.activeElement)?document.activeElement.dataset.itemId:null;
+    collectionItems.replaceChildren();
+    for (const item of ITEM_CATALOG) {
+      const owned=collection.unlocked.includes(item.id), equipped=collection.equipped[item.slot]===item.id;
+      const rarity=RARITIES.find(value=>value.id===item.rarity);
+      const button=document.createElement('button');button.type='button';button.dataset.itemId=item.id;button.className=`collection-item${equipped?' is-equipped':''}`;
+      button.disabled=!owned;button.setAttribute('aria-pressed',String(equipped));
+      const slotName={head:'CABEÇA',body:'TRAJE',charm:'ACESSÓRIO'}[item.slot];
+      const title=document.createElement('strong');title.textContent=`${rarity.marks} ${item.name}`;
+      const description=document.createElement('span');description.textContent=`${slotName} · ${rarity.name.toUpperCase()} · ${Object.entries(item.bonus).map(([stat,value])=>`+${Math.round(value*100)}% ${ {damage:'dano',defense:'defesa',reload:'recarga'}[stat]}`).join(' / ')}`;
+      const state=document.createElement('small');state.textContent=owned?(equipped?'EQUIPADO · CLIQUE PARA RETIRAR':'CLIQUE PARA EQUIPAR'):'ENCONTRE EM BAÚS, DESAFIOS E BOSSES';
+      button.append(title,description,state);
+      button.addEventListener('click',()=>{
+        if (!collectionOpen) return;
+        equipItem(collection,equipped?null:item.id,item.slot);
+        equipmentBonuses=getEquipmentBonuses(collection);equipment=getEquippedStyles();persistCollection();renderCollection();
+      });collectionItems.append(button);
+      if(item.id===focusedItem)button.focus({preventScroll:true});
+    }
+    const bonuses=$('collectionBonuses');
+    if(bonuses)bonuses.textContent=`DANO +${Math.round(equipmentBonuses.damage*100)}% · DEFESA +${Math.round(equipmentBonuses.defense*100)}% · RECARGA +${Math.round(equipmentBonuses.reload*100)}%`;
+    const storage=$('collectionStorage');if(storage)storage.textContent=collectionSaved?'Coleção salva neste navegador. Continua disponível após morrer.':'Armazenamento indisponível: sua coleção ficará disponível somente nesta sessão.';
+    const total=$('collectionTotal');if(total)total.textContent=`${collection.unlocked.length} / ${ITEM_CATALOG.length} DESCOBERTOS`;
+    if(collectionPreview){const target=collectionPreview.getContext('2d');target.clearRect(0,0,240,180);drawTraveler(target,{x:120,y:80,tile:108,time:0,angle:-.1,moving:false,weapon:currentWeapon,fireAnim:0,reloadTimer:0,reloadDuration:1,equipment,reducedMotion:true});}
+  }
+
+  function toggleCollection(force) {
+    if(settingsOpen)return;
+    collectionOpen=typeof force==='boolean'?force:!collectionOpen;
+    mouseHeld=false;keyState.clear();
+    if(collectionOpen){persistCollection();renderCollection();showOverlay(collectionOverlay);$('closeCollectionButton')?.focus({preventScroll:true});}
+    else{hideOverlay(collectionOverlay);if(running&&!paused&&!won&&!dead)startTime=performance.now()-elapsed;(paused?resumeButton:won?nextButton:dead?retryButton:running?canvas:startButton).focus({preventScroll:true});}
+  }
 
   function openCells() {
     const result = [];
@@ -207,7 +290,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       candidates.push({ x, y, cells, center, corridorDx, corridorDy });
     }
     candidates.sort((a,b) => dist(b.center.x,b.center.y,player.x,player.y) - dist(a.center.x,a.center.y,player.x,player.y) + (Math.random() - .5) * 2.4);
-    const wanted = stage >= 5 ? 2 : 1;
+    const wanted = 3;
     const result = [];
     for (const candidate of candidates) {
       if (result.length >= wanted) break;
@@ -215,7 +298,8 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       // Each hidden annex is carved behind a single sealed stone panel.
       for (const cell of candidate.cells) maze[cell.y][cell.x] = 0;
       maze[candidate.y][candidate.x] = 0;
-      result.push({ ...candidate, id: result.length + 1, opened: false, revealed: false });
+      const id=result.length+1;
+      result.push({ ...candidate, id, opened: false, revealed: false, locked:true, keyId:String(id), symbol:['Ⅰ','Ⅱ','Ⅲ','Ⅳ'][id-1] });
     }
     return result;
   }
@@ -255,6 +339,10 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       }
     }
     for (const room of secretRooms) {
+      const keyPool=openCells().filter(cell => dist(cell.x+.5,cell.y+.5,player.x,player.y)>6 && chosen.every(item=>dist(cell.x,cell.y,item.x,item.y)>1.5));
+      const keyCell=keyPool[randInt(keyPool.length)];
+      if(keyCell)chosen.push({type:'vaultKey',x:keyCell.x,y:keyCell.y,keyId:room.keyId,symbol:room.symbol,phase:Math.random()*6,taken:false});
+      else room.locked=false;
       const p = room.cells[Math.floor(room.cells.length * .55)];
       if (p) chosen.push({ type: 'cache', x: p.x, y: p.y, phase: Math.random() * Math.PI * 2, taken: false, secret: true, secretId: room.id });
       const q = room.cells[Math.floor(room.cells.length * .78)];
@@ -264,22 +352,85 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function tryInteract() {
-    if (!running || paused || settingsOpen || won || dead) return;
+    if (!running || paused || settingsOpen || collectionOpen || won || dead) return;
     const door = secretDoors.find(item => !item.opened && dist(player.x, player.y, item.x + .5, item.y + .5) < .95);
     if (door) {
       door.revealed = true;
+      if(door.locked&&!vaultKeys.has(door.keyId)){showPickupToast(`PORTA ${door.symbol} TRANCADA · ENCONTRE A CHAVE ${door.symbol}`);return;}
       door.opened = true;
+      awardPoints(250);
       navigationDirty = true;
       lastPathUpdate = -Infinity;
       objectiveText = hasKey ? 'Encontre a saída' : objectiveText;
-      showPickupToast('PASSAGEM SECRETA ABERTA · TESOURO ESCONDIDO');
+      showPickupToast(`PORTA ${door.symbol} ABERTA · TESOURO ESCONDIDO`);
       showFloatingText(door.x + .5, door.y + .5, 'PASSAGEM REVELADA', '#e7cf91', 1.6);
       tone(180, .2, 'triangle', .04); tone(310, .12, 'sine', .025);
       return;
     }
     const cache = lootPickups.find(item => item.type === 'cache' && !item.taken && dist(player.x, player.y, item.x + .5, item.y + .5) < .95);
-    if (cache) { cache.taken = true; health = Math.min(100, health + 20); if (currentWeapon && ammo[currentWeapon]) ammo[currentWeapon].reserve += currentWeapon === 'shotgun' ? 8 : currentWeapon === 'ak' ? 30 : 12; showPickupToast('BAÚ ANTIGO · VIDA E MUNIÇÃO'); showFloatingText(cache.x + .5, cache.y + .5, 'TESOURO ENCONTRADO', '#f2d686', 1.5); updateHUD(); updateWeaponUI(); tone(520,.16,'triangle',.035); }
+    if (cache) { cache.taken = true; health = Math.min(100, health + 20); for(const id of weaponInventory) if(ammo[id])ammo[id].reserve+=id==='shotgun'?10:id==='ak'?45:18; awardPoints(200);awardEquipment(); showFloatingText(cache.x + .5, cache.y + .5, 'TESOURO ENCONTRADO', '#f2d686', 1.5); updateHUD(); updateWeaponUI(); tone(520,.16,'triangle',.035); }
+    else if(challenge&&!challenge.completed&&dist(player.x,player.y,challenge.x,challenge.y)<1.25){
+      if(!challenge.active){challenge.active=true;awardPoints(50);showPickupToast('RITUAL INICIADO · TRÊS ONDAS · RECOMPENSA GARANTIDA');updateChallenge();}
+    }
     else showPickupToast('NADA AO ALCANCE · PROCURE PAREDES COM RACHADURAS', 1200);
+  }
+
+  function createChallenge() {
+    const cells=openCells().filter(cell=>dist(cell.x+.5,cell.y+.5,player.x,player.y)>7&&dist(cell.x+.5,cell.y+.5,exit.x+.5,exit.y+.5)>4&&weaponPickups.every(w=>dist(w.x,w.y,cell.x,cell.y)>2)&&lootPickups.every(item=>dist(item.x,item.y,cell.x,cell.y)>1.5));
+    const place=cells[randInt(cells.length)]||openCells().find(cell=>dist(cell.x,cell.y,player.x,player.y)>5);
+    challenge=place?{id:`ritual-${stage}`,x:place.x+.5,y:place.y+.5,active:false,completed:false,wave:0,totalWaves:3,remaining:0}:null;
+  }
+
+  function spawnReinforcements(source, amount, challengeId = null) {
+    const alive=enemies.reduce((sum,e)=>sum+Number(e.alive),0),count=Math.min(amount,MAX_ENEMIES-alive);
+    if(count<=0)return 0;
+    // Search fresh walkable routes: nearby maze cells can require long detours.
+    // Every step of a route this short stays inside the ordinary chase radius.
+    const queue=[{x:Math.floor(player.x),y:Math.floor(player.y),steps:0}],seen=new Set([cellKey(queue[0].x,queue[0].y)]),reachable=new Map();
+    for(let head=0;head<queue.length;head++){
+      const p=queue[head];if(!walkableCell(p.x,p.y))continue;
+      reachable.set(cellKey(p.x,p.y),p.steps);
+      if(p.steps>=10)continue;
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const x=p.x+dx,y=p.y+dy,key=cellKey(x,y);
+        if(!seen.has(key)&&walkableCell(x,y)){seen.add(key);queue.push({x,y,steps:p.steps+1});}
+      }
+    }
+    const candidates=openCells().filter(p=>reachable.get(cellKey(p.x,p.y))>=4&&dist(p.x+.5,p.y+.5,source.x,source.y)<8&&dist(p.x+.5,p.y+.5,player.x,player.y)>3.5&&weaponPickups.every(w=>dist(p.x,p.y,w.x,w.y)>2.6)&&enemies.every(e=>!e.alive||dist(e.x,e.y,p.x+.5,p.y+.5)>.8));
+    let spawned=0;
+    for(let i=0;i<count&&candidates.length;i++){
+      const p=candidates.splice(randInt(candidates.length),1)[0];
+      const enemy=createEnemy(i%4===3?'spitter':i%3===2?'feral':'zombie',p.x+.5,p.y+.5,stage,Math.random,combatDifficulty);
+      enemy.challengeId=challengeId;enemy.chase=true;enemies.push(enemy);spawned++;
+      for(let j=candidates.length-1;j>=0;j--)if(dist(p.x,p.y,candidates[j].x,candidates[j].y)<1)candidates.splice(j,1);
+    }
+    return spawned;
+  }
+
+  function updateChallenge() {
+    if(!challenge?.active||challenge.completed)return;
+    challenge.hint='';
+    if(dist(player.x,player.y,challenge.x,challenge.y)>12){challenge.hint='RITUAL PAUSADO · APROXIME-SE DO ALTAR';return;}
+    challenge.remaining=enemies.reduce((sum,e)=>sum+Number(e.alive&&e.challengeId===challenge.id),0);
+    if(challenge.remaining>0)return;
+    if(challenge.wave>=challenge.totalWaves){
+      challenge.active=false;challenge.completed=true;awardPoints(750+stage*100);awardEquipment(stage>=5?1:0);
+      health=Math.min(100,health+24);for(const id of weaponInventory)if(ammo[id])ammo[id].reserve+=id==='shotgun'?12:id==='ak'?60:24;
+      showFloatingText(challenge.x,challenge.y,'RITUAL CONCLUÍDO', '#ffd88d',2);return;
+    }
+    const amount=spawnReinforcements(challenge,4+(challenge.wave+1)*2+Math.floor(stage/2),challenge.id);
+    if(amount){challenge.wave++;challenge.remaining=amount;showPickupToast(`RITUAL · ONDA ${challenge.wave}/${challenge.totalWaves} · ${amount} INIMIGOS`);}
+    else if(enemies.some(e=>e.alive&&dist(e.x,e.y,player.x,player.y)<12)||enemies.filter(e=>e.alive).length>=MAX_ENEMIES)challenge.hint='RITUAL · ELIMINE OS INIMIGOS PRÓXIMOS PARA LIBERAR A ONDA';
+    else challenge.hint='RITUAL · MOVA-SE PERTO DO ALTAR PARA LIBERAR ESPAÇO PARA A ONDA';
+  }
+
+  function updateInteractionHint() {
+    if(challenge?.active&&challenge.hint){interactionHint=challenge.hint;return;}
+    const door=secretDoors.find(d=>!d.opened&&dist(player.x,player.y,d.x+.5,d.y+.5)<1.4);
+    if(door){door.revealed=true;interactionHint=door.locked&&!vaultKeys.has(door.keyId)?`PORTA ${door.symbol} · PRECISA DA CHAVE ${door.symbol}`:`E · ABRIR PORTA ${door.symbol}`;return;}
+    if(lootPickups.some(item=>item.type==='cache'&&!item.taken&&dist(player.x,player.y,item.x+.5,item.y+.5)<1.3)){interactionHint='E · ABRIR BAÚ · EQUIPAMENTO ALEATÓRIO';return;}
+    if(challenge&&!challenge.completed&&dist(player.x,player.y,challenge.x,challenge.y)<1.8){interactionHint=challenge.active?`RITUAL ${challenge.wave}/3 · RESTAM ${challenge.remaining}`:'E · INICIAR RITUAL DE TRÊS ONDAS';return;}
+    interactionHint='';
   }
 
   function placeCoins(count) {
@@ -320,8 +471,12 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   function collectLootPickups() {
     for (const item of lootPickups) {
       if (item.type === 'cache' || item.taken || dist(player.x, player.y, item.x + .5, item.y + .5) > .48) continue;
+      if(item.secret&&!secretDoors.some(door=>door.id===item.secretId&&door.opened))continue;
       item.taken = true;
-      if (item.type === 'key') {
+      if(item.type==='vaultKey'){
+        vaultKeys.add(item.keyId);awardPoints(100);showPickupToast(`CHAVE ${item.symbol} ENCONTRADA · ABRE A PORTA ${item.symbol}`);showFloatingText(item.x+.5,item.y+.5,`CHAVE ${item.symbol}`,'#f6d578',1.6);tone(640,.12,'triangle',.04);
+      } else if (item.type === 'key') {
+        awardPoints(200);
         hasKey = true; objectiveText = 'Chave obtida · encontre a saída';
         showPickupToast('CHAVE ANTIGA ENCONTRADA · SAÍDA DESTRANCADA');
         showFloatingText(item.x + .5, item.y + .5, 'SAÍDA DESTRANCADA', '#f6d578', 1.7);
@@ -353,6 +508,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
 
   function damagePlayer(amount, source = 'enemy') {
     if (damageCooldown > 0 || dead) return false;
+    amount=Math.max(1,Math.round(amount*(1-equipmentBonuses.defense)));
     health = Math.max(0, health - amount);
     damageCooldown = .72; hitFlash = .28;
     tone(source === 'projectile' ? 105 : 72, .14, 'sawtooth', .045);
@@ -363,11 +519,13 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
 
   function dropEnemyLoot(enemy) {
     if (enemy.dropKey) {
+      awardEquipment(stage===8?2:1);
       objectiveText = 'Guardião derrotado · pegue a chave caída';
       lootPickups.push({ type: 'key', x: Math.floor(enemy.x), y: Math.floor(enemy.y), phase: Math.random()*6, taken: false });
       showPickupToast('GUARDIÃO DERROTADO · A CHAVE CAIU');
       lootPickups.push({ type: 'health', x: Math.floor(enemy.x), y: Math.floor(enemy.y), phase: Math.random()*6, taken: false });
     } else {
+      if(Math.random()<.065)awardEquipment();
       const roll = Math.random();
       if (roll < .17) lootPickups.push({ type: 'health', x: Math.floor(enemy.x), y: Math.floor(enemy.y), phase: Math.random()*6, taken: false });
       else if (roll < .49) lootPickups.push({ type: 'ammo', x: Math.floor(enemy.x), y: Math.floor(enemy.y), phase: Math.random()*6, taken: false });
@@ -433,10 +591,18 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
         const score = nearest + Math.random() * 2.2;
         if (score > bestScore) { bestScore = score; bestIndex = index; }
       }
+      const packIndex=(i-regionalPlans.length)%10, zombiePack=i>=regionalPlans.length&&packIndex<4;
+      if(zombiePack&&packIndex>0&&placed.length){
+        const anchor=placed[placed.length-1];
+        const near=pool.reduce((indices,p,index)=>{const gap=dist(anchor.x,anchor.y,p.x,p.y);if(gap>=1.3&&gap<4)indices.push(index);return indices;},[]);
+        if(near.length)bestIndex=near[randInt(near.length)];
+      }
       const p = pool.splice(bestIndex, 1)[0];
       placed.push(p);
       for (let j = pool.length - 1; j >= 0; j--) if (dist(pool[j].x, pool[j].y, p.x, p.y) < 1.25) pool.splice(j, 1);
-      const type = regionalCells.length ? encounter.type : chooseEnemyType(stage, Math.random, maze[p.y][p.x]);
+      let type = regionalCells.length ? encounter.type : chooseEnemyType(stage, Math.random, maze[p.y][p.x]);
+      if(zombiePack)type=packIndex===3?'spitter':packIndex===2?'feral':'zombie';
+      else if(['zombie','feral','spitter'].includes(type))type=stage>=2?['skeleton','warrior','archer','runner'][randInt(4)]:'skeleton';
       enemies.push(createEnemy(type, p.x + .5, p.y + .5, stage, Math.random, combatDifficulty));
     }
 
@@ -451,7 +617,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       bossCandidates.sort((a,b) => dist(a.x+.5,a.y+.5,exit.x+.5,exit.y+.5) - dist(b.x+.5,b.y+.5,exit.x+.5,exit.y+.5));
       const p = bossCandidates[0];
       const fallback = p || openCells().filter(cell => dist(cell.x+.5,cell.y+.5,player.x,player.y)>10 && weaponPickups.every(w => dist(cell.x+.5,cell.y+.5,w.x+.5,w.y+.5)>2.6) && enemies.every(e => dist(e.x,e.y,cell.x+.5,cell.y+.5)>2)).sort((a,b)=>dist(b.x,b.y,player.x,player.y)-dist(a.x,a.y,player.x,player.y))[0];
-      if (fallback) { const boss = createEnemy('guardian', fallback.x + .5, fallback.y + .5, stage, Math.random, combatDifficulty); boss.dropKey = true; enemies.push(boss); }
+      if (fallback) { const boss = createEnemy(getBossType(stage)||'guardian', fallback.x + .5, fallback.y + .5, stage, Math.random, combatDifficulty); boss.name=stage===3?'Guardião dos Ossos':stage===6?'Colosso da Peste':'Senhor da Última Cripta';if(boss.type==='plagueBoss')boss.attackKind='dash';boss.dropKey = true; enemies.push(boss); }
     }
   }
 
@@ -470,6 +636,8 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     ammo = saved?.ammo && typeof saved.ammo === 'object' ? structuredClone(saved.ammo) : {};
     currentWeapon = saved?.currentWeapon && weaponInventory.has(saved.currentWeapon) ? saved.currentWeapon : null;
     elapsed = saved?.elapsed || 0;
+    scoreState={score:Math.max(0,Number(saved?.score)||0),best:collection.best,combo:0,comboUntil:0};
+    collectionOpen=false;hideOverlay(collectionOverlay);
     canvasWrap.classList.add('playing');
     if (!saved) elapsed = 0; running = true; paused = false; won = false; dead = false;
     showMap = false; settingsOpen = false; hasKey = false;
@@ -502,6 +670,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     secretDoors = [];
     secretRooms = createSecretRooms();
     secretDoors = secretRooms;
+    vaultKeys=new Set();challenge=null;interactionHint='';fireAnim=0;reloadDuration=0;
     coins = placeCoins(base.coins + Math.floor((stage - 1) * .9));
     stageCoins = coins.length;
     weaponPickups = placeWeaponPickups();
@@ -509,6 +678,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     objectiveText = isBossStage(stage) ? 'Derrote o guardião e pegue a chave' : 'Encontre a chave antiga';
     spawnEnemies();
     lootPickups = placeLootPickups();
+    createChallenge();
     bullets = []; hostileBullets = []; particles = [];
     floatingTexts = []; combatPulse = 0; visitedAreas = new Set();
     reloadTimer = 0;
@@ -525,7 +695,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   function hideOverlay(el) { el.classList.add('hidden'); }
 
   function togglePause(force) {
-    if (!running || won || dead) return;
+    if (!running || won || dead || collectionOpen || settingsOpen) return;
     paused = typeof force === 'boolean' ? force : !paused;
     if (paused) {
       showOverlay(pauseOverlay); gameStatus.textContent = 'JOGO PAUSADO'; pauseButton.textContent = '▶';
@@ -540,6 +710,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function returnToMenu() {
+    collectionOpen=false;hideOverlay(collectionOverlay);persistCollection();
     running = false; paused = false; settingsOpen = false; pausedBeforeSettings = false;
     won = false; dead = false; mouseHeld = false; lastMouse = null; showMap = false;
     fireCooldown = 0; reloadTimer = 0; damageCooldown = 0; hitFlash = 0;
@@ -611,6 +782,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       const [name, color] = areas[region];
       showPickupToast(`REGIÃO DESCOBERTA · ${name}`, 2300);
       showFloatingText(player.x, player.y, name, color, 1.8);
+      awardPoints(150);
       tone(region === 2 ? 290 : region === 3 ? 460 : 350, .18, 'sine', .025);
     }
     if (cellX === exit.x && cellY === exit.y) {
@@ -625,6 +797,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     for (const coin of coins) {
       if (coin.taken || dist(player.x, player.y, coin.x + .5, coin.y + .5) > .43) continue;
       coin.taken = true; collected++;
+      awardPoints(50);
       showFloatingText(coin.x + .5, coin.y + .5, collected % 3 === 0 && weaponInventory.size ? '+BRASA · +MUNIÇÃO' : '+1 BRASA', '#f6d17f');
       tone(630, .09, 'triangle', .035);
       setTimeout(() => tone(410, .1, 'sine', .025), 45);
@@ -637,6 +810,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function setWeapon(id) {
+    if(collectionOpen||settingsOpen||paused||won||dead)return;
     if (!WEAPONS[id] || !weaponInventory.has(id)) return;
     if (currentWeapon !== id && reloadTimer > 0) { reloadTimer = 0; gameStatus.textContent = 'ARMA EQUIPADA'; }
     currentWeapon = id; updateWeaponUI();
@@ -663,7 +837,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function shoot() {
-    if (!running || paused || won || dead || reloadTimer > 0 || fireCooldown > 0) return;
+    if (!running || paused || settingsOpen || collectionOpen || won || dead || reloadTimer > 0 || fireCooldown > 0) return;
     if (!currentWeapon || !weaponInventory.has(currentWeapon)) return; // Torch-only until the first pickup.
     const weapon = WEAPONS[currentWeapon];
     if (bullets.length + weapon.pellets > MAX_BULLETS) return;
@@ -674,9 +848,11 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       return;
     }
     slot.mag--;
+    fireAnim=.14;
     fireCooldown = weapon.rate;
     const angleToUse = lastMouse && lastMouse.active ? Math.atan2(lastMouse.worldY - player.y, lastMouse.worldX - player.x) : player.angle;
     player.angle = angleToUse;
+    const muzzle=hasLineOfSight(player.x,player.y,player.x+Math.cos(angleToUse)*.48,player.y+Math.sin(angleToUse)*.48)?.48:0;
     if (weapon.sound === 'shotgun') {
       tone(105, .22, 'sawtooth', .052); setTimeout(() => tone(62, .12, 'triangle', .035), 25);
     } else if (weapon.sound === 'ak') {
@@ -688,10 +864,10 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       const spread = (Math.random() - .5) * weapon.spread * 2;
       const angle = angleToUse + spread;
       bullets.push({
-        x: player.x + Math.cos(angle) * .23, y: player.y + Math.sin(angle) * .23,
+        x: player.x + Math.cos(angleToUse) * muzzle, y: player.y + Math.sin(angleToUse) * muzzle,
         vx: Math.cos(angle) * weapon.speed, vy: Math.sin(angle) * weapon.speed,
         remainingRange: weapon.range, maxBounces: weapon.bounces, bounces: 0,
-        damage: weapon.damage, color: weapon.color, size: currentWeapon === 'shotgun' ? .07 : .045
+        damage: weapon.damage*(1+equipmentBonuses.damage), color: weapon.color, size: currentWeapon === 'shotgun' ? .07 : .045
       });
     }
     const fx = player.x + Math.cos(angleToUse) * .48, fy = player.y + Math.sin(angleToUse) * .48;
@@ -703,10 +879,11 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function reload() {
-    if (!running || paused || reloadTimer > 0 || !currentWeapon || !weaponInventory.has(currentWeapon)) return;
+    if (!running || paused || settingsOpen || collectionOpen || won || dead || reloadTimer > 0 || !currentWeapon || !weaponInventory.has(currentWeapon)) return;
     const slot = ammo[currentWeapon], weapon = WEAPONS[currentWeapon];
     if (slot.mag >= weapon.magazine || slot.reserve <= 0) { tone(95, .04, 'triangle', .018); return; }
     reloadTimer = currentWeapon === 'shotgun' ? 1.05 : currentWeapon === 'ak' ? 1.25 : .9;
+    reloadTimer*=1-equipmentBonuses.reload;reloadDuration=reloadTimer;
     gameStatus.textContent = 'RECARREGANDO';
     tone(260, .05, 'triangle', .02); setTimeout(() => tone(170, .06, 'square', .02), 180);
   }
@@ -755,6 +932,15 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       // Distant enemies sleep until approached; there is no offscreen search or LOS work.
       if (d > 22 && enemy.attackAnim <= 0 && enemy.charge <= 0) continue;
       enemy.chase = d < (enemy.boss ? 16 : 13);
+      if(enemy.boss){
+        if(enemy.hp<=enemy.maxHp*.5&&enemy.bossPhase===1){
+          enemy.bossPhase=2;enemy.speed*=1.2;enemy.shotCooldown=Math.max(650,enemy.shotCooldown*.72);enemy.meleeCooldown*=.8;
+          showPickupToast(`${enemy.name.toUpperCase()} · SEGUNDA FASE`);showFloatingText(enemy.x,enemy.y,'FÚRIA', '#ffd88d',1.4);
+        }
+        if(enemy.chase&&['plagueBoss','cryptLord'].includes(enemy.type)&&time-(enemy.summonAt||0)> (enemy.bossPhase===2?7500:11000)){
+          enemy.summonAt=time;spawnReinforcements(enemy,enemy.bossPhase===2?4:2);
+        }
+      }
 
       if (enemy.charge > 0) {
         const home = maze[Math.floor(enemy.y)]?.[Math.floor(enemy.x)];
@@ -782,9 +968,10 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
             tone(190, .09, 'triangle', .025);
           } else if (attackMode === 'shoot') {
             if (!hasLineOfSight(enemy.x, enemy.y, enemy.attackTargetX ?? player.x, enemy.attackTargetY ?? player.y)) continue;
-            const pattern = enemy.projectilePattern;
-            const offsets = pattern === 'fan' ? [-.22, 0, .22] : pattern === 'twin' ? [-.10, .10] : pattern === 'spectral' ? [-.17, .17] : [0];
-            const speed = (pattern === 'needle' ? 5.4 : pattern === 'arrow' ? 5.0 : pattern === 'fan' ? 3.6 : pattern === 'spectral' ? 4.0 : 4.4) * profile.projectileSpeed;
+            enemy.shotNumber=(enemy.shotNumber||0)+1;
+            const pattern = enemy.type==='cryptLord'?(enemy.shotNumber%2?'fan':'spectral'):enemy.projectilePattern;
+            const offsets = enemy.boss&&enemy.bossPhase===2&&pattern==='fan'?[-.36,-.18,0,.18,.36]:pattern === 'fan' ? [-.22, 0, .22] : pattern === 'twin' ? [-.10, .10] : pattern === 'spectral' ? [-.17, .17] : [0];
+            const speed = clamp(20*profile.projectileSpeed+(pattern==='needle'?2:0),20,24);
             for (const offset of offsets) {
               if (hostileBullets.length >= MAX_HOSTILE_BULLETS) break;
               const angle = enemy.attackAim + offset;
@@ -792,7 +979,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
               if (!hasLineOfSight(enemy.x, enemy.y, x, y)) continue;
               hostileBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
                 damage: Math.max(2, Math.round(enemy.damage * (enemy.ranged ? 1 : enemy.boss ? .55 : .65))),
-                color: pattern === 'fan' ? '#ef985d' : pattern === 'spectral' ? '#e4c88a' : '#f3c875', life: 2.6 });
+                color: pattern === 'fan' ? '#ef985d' : pattern === 'spectral' ? '#e4c88a' : '#f3c875', life: .65 });
             }
             tone(pattern === 'fan' ? 175 : 330, .09, 'triangle', .024);
           } else {
@@ -802,7 +989,8 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
             if (enemy.boss && d < 2.6) {
               for (let i = 0; i < 8 && hostileBullets.length < MAX_HOSTILE_BULLETS; i++) {
                 const angle = i * Math.PI / 4;
-                hostileBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * 3.2 * profile.projectileSpeed, vy: Math.sin(angle) * 3.2 * profile.projectileSpeed, damage: Math.max(2, Math.round((10 + stage) * profile.damage)), color: '#e88c60', life: 1.7 });
+                const speed=clamp(20*profile.projectileSpeed,20,24);
+                hostileBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: Math.max(2, Math.round((10 + stage) * profile.damage)), color: '#e88c60', life: .48 });
               }
             }
           }
@@ -955,7 +1143,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
 
         const target = enemyAtBullet(b.x, b.y);
         if (target) {
-          target.hp -= b.damage; target.flash = .12; target.hurtAt = performance.now(); removed = true;
+          target.hp -= b.damage; target.flash = .18; target.hitAngle=Math.atan2(b.vy,b.vx);target.hurtAt = performance.now(); removed = true;
           combatPulse = Math.max(combatPulse, .26);
           if (performance.now() - (target.lastDamageText || 0) > 110) {
             showFloatingText(target.x, target.y, `${Math.round(b.damage)}`, '#efd7b1', .60);
@@ -964,13 +1152,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
           particles.push({ x: b.x, y: b.y, vx: (Math.random() - .5) * 1.2, vy: (Math.random() - .5) * 1.2, life: .25, maxLife: .25, color: '#a9362e', size: .06 });
           tone(230 + Math.random() * 90, .055, 'triangle', .025);
           if (target.hp <= 0) {
-            target.alive = false; kills++;
-            combatPulse = target.boss ? 1 : .5;
-            showFloatingText(target.x, target.y - .25, target.boss ? 'GUARDIÃO DERROTADO' : 'DERROTADO', target.boss ? '#ffd88d' : '#e4cda2', target.boss ? 1.7 : .85);
-            dropEnemyLoot(target);
-            for (let n = 0; n < (target.boss ? 28 : 9); n++) particles.push({ x: target.x, y: target.y, vx: (Math.random() - .5) * 2.4, vy: (Math.random() - .5) * 2.4, life: .35 + Math.random() * .25, maxLife: .6, color: n % 2 ? '#b6ad8d' : '#7e3127', size: .04 + Math.random() * .035 });
-            if (currentWeapon && ammo[currentWeapon] && Math.random() < .20) ammo[currentWeapon].reserve += currentWeapon === 'shotgun' ? 2 : currentWeapon === 'pistol' ? 5 : 9;
-            tone(95, .12, 'sawtooth', .032); updateHUD(); updateWeaponUI();
+            defeatEnemy(target);
           }
         }
         if (b.remainingRange <= 0) removed = true;
@@ -980,6 +1162,10 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function updateParticles(dt) {
+    fireAnim=Math.max(0,fireAnim-dt);
+    for(const enemy of enemies)if(!enemy.alive&&enemy.deathLife>0)enemy.deathLife=Math.max(0,enemy.deathLife-dt);
+    // Recycle finished corpses so long rituals do not keep growing the active array.
+    enemies=enemies.filter(enemy=>enemy.alive||enemy.deathLife>0);
     if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
     combatPulse = Math.max(0, combatPulse - dt * 3);
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
@@ -992,9 +1178,23 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     }
   }
 
+  function defeatEnemy(enemy) {
+    if(!enemy.alive)return false;
+    enemy.alive=false;enemy.attackAnim=0;enemy.charge=0;enemy.deathMax=enemy.boss?1.65:enemy.zombie?1.05:.8;enemy.deathLife=enemy.deathMax;
+    kills++;combatPulse=enemy.boss?1:.5;
+    const points=awardPoints(enemy.boss?1500+stage*150:enemy.zombie?120:100,true);
+    showFloatingText(enemy.x,enemy.y-.25,enemy.boss?`${enemy.name.toUpperCase()} VENCIDO`:`+${points}`,enemy.boss?'#ffd88d':'#e4cda2',enemy.boss?1.7:.85);
+    dropEnemyLoot(enemy);
+    for(let n=0;n<(enemy.boss?28:12);n++)particles.push({x:enemy.x,y:enemy.y,vx:Math.cos(enemy.hitAngle||0)*(1+Math.random())+(Math.random()-.5)*2,vy:Math.sin(enemy.hitAngle||0)*(1+Math.random())+(Math.random()-.5)*2,life:.35+Math.random()*.35,maxLife:.7,color:n%2?'#b6ad8d':'#7e3127',size:.04+Math.random()*.035});
+    if(currentWeapon&&ammo[currentWeapon]&&Math.random()<.25)ammo[currentWeapon].reserve+=currentWeapon==='shotgun'?3:currentWeapon==='pistol'?7:12;
+    tone(95,.12,'sawtooth',.032);updateHUD();updateWeaponUI();return true;
+  }
+
   function finishLevel() {
     if (won || dead) return;
     won = true; running = false; paused = false; elapsed = performance.now() - startTime;
+    awardPoints(1000+stage*250+collected*25);persistCollection();
+    const finalScore=$('finalScore');if(finalScore)finalScore.textContent=scoreState.score.toLocaleString('pt-BR');
     finalTime.textContent = formatTime(elapsed); finalCoins.textContent = `${collected}/${stageCoins}`;
     if (stage >= MAX_STAGES) {
       clearCampaignSave(); if (titleContinueButton) titleContinueButton.classList.add('hidden');
@@ -1002,7 +1202,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       winCopy.textContent = 'Oito labirintos ficaram para trás. A chama ainda vive — por enquanto.';
       nextButton.innerHTML = 'Jogar campanha novamente <span>↻</span>';
     } else {
-      saveCampaign({ stage: stage + 1, difficulty, combatDifficulty, kills, elapsed, health: Math.min(100, health + 20), inventory: [...weaponInventory], currentWeapon, ammo, completedStages: stage });
+      saveCampaign({ stage: stage + 1, difficulty, combatDifficulty, kills, elapsed, score:scoreState.score, health: Math.min(100, health + 20), inventory: [...weaponInventory], currentWeapon, ammo, completedStages: stage });
       const checkpoint = loadCampaignSave(); if (checkpoint && titleContinueButton) { titleContinueButton.classList.remove('hidden'); titleContinueButton.innerHTML = `CONTINUAR CAMPANHA · FASE ${String(checkpoint.stage).padStart(2,'0')} <span>↗</span>`; }
       winHeadline.innerHTML = 'Você encontrou<br /><em>a passagem.</em>';
       winCopy.textContent = `Fase ${stage} concluída. Seu progresso foi salvo. A próxima região terá novas ameaças.`;
@@ -1014,6 +1214,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function gameOver() {
+    persistCollection();const deathScore=$('deathScore');if(deathScore)deathScore.textContent=`${scoreState.score.toLocaleString('pt-BR')} PONTOS · SUA COLEÇÃO ESTÁ ${collectionSaved?'SALVA':'DISPONÍVEL NESTA SESSÃO'}`;
     dead = true; running = false; paused = false; mouseHeld = false; keyState.clear();
     showOverlay(deadOverlay); pauseButton.disabled = true; gameStatus.textContent = 'A CHAMA SE APAGOU';
     retryButton.focus({ preventScroll: true });
@@ -1041,6 +1242,14 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function updateHUD() {
+    const scoreValue=$('scoreValue'),comboValue=$('comboValue'),keyringValue=$('keyringValue'),progress=$('expeditionProgress');
+    const scoreText=scoreState.score.toLocaleString('pt-BR');if(scoreValue&&scoreValue.textContent!==scoreText)scoreValue.textContent=scoreText;
+    const comboText=scoreState.combo>1&&elapsed<=scoreState.comboUntil?`SEQUÊNCIA ×${scoreState.combo} · RECORDE ${scoreState.best.toLocaleString('pt-BR')}`:`RECORDE ${scoreState.best.toLocaleString('pt-BR')}`;
+    if(comboValue&&comboValue.textContent!==comboText)comboValue.textContent=comboText;
+    const keyText=`CHAVES · ${hasKey?'SAÍDA · ':''}${secretDoors.filter(d=>vaultKeys.has(d.keyId)).map(d=>d.symbol).join(' ')||'—'}`;
+    if(keyringValue&&keyringValue.textContent!==keyText)keyringValue.textContent=keyText;
+    const progressText=`FASE ${String(stage).padStart(2,'0')} / 08 · ${kills} ELIMINADOS${reloadTimer>0?' · RECARREGANDO':''}`;
+    if(progress&&progress.textContent!==progressText)progress.textContent=progressText;
     if (hudValues.health !== health) {
       hudValues.health = health; hud.updateHealth(health);
       healthValue.textContent = `${health}%`; healthBar.style.transform = `scaleX(${health / 100})`;
@@ -1064,6 +1273,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   }
 
   function toggleSettings() {
+    if(collectionOpen)return;
     if (settingsOpen) { closeSettings(); return; }
     settingsOpen = true; pausedBeforeSettings = paused;
     if (volumeSetting) volumeSetting.value = String(settings.volume ?? .65);
@@ -1104,9 +1314,11 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
       if ((key === 'enter' || key === ' ') && !event.repeat && !onControl) { event.preventDefault(); titleStartButton.click(); }
       return;
     }
-    const activeDialog = settingsOpen ? settingsOverlay : paused ? pauseOverlay : won ? winOverlay : dead ? deadOverlay : !running ? startOverlay : null;
+    const activeDialog = collectionOpen?collectionOverlay:settingsOpen ? settingsOverlay : paused ? pauseOverlay : won ? winOverlay : dead ? deadOverlay : !running ? startOverlay : null;
     if (key === 'tab' && activeDialog) { trapDialogFocus(event, activeDialog); return; }
+    if(collectionOpen){if((key==='escape'||key==='i')&&!event.repeat){event.preventDefault();toggleCollection(false);}return;}
     if (settingsOpen) { if ((key === 'escape' || key === 'o') && !event.repeat) closeSettings(); return; }
+    if(key==='i'&&!event.repeat){event.preventDefault();toggleCollection();return;}
     if (key === 'o' && !event.repeat) { toggleSettings(); return; }
     if (key === 'm' && running && !event.repeat) { showMap = !showMap; showPickupToast(showMap ? 'MAPA ABERTO' : 'MAPA FECHADO', 750); return; }
     if (onControl && key !== 'escape' && (!running || paused || won || dead)) return;
@@ -1128,7 +1340,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   function handleKeyUp(event) { keyState.delete(event.key.toLowerCase()); }
 
   canvas.addEventListener('pointermove', event => {
-    if (event.pointerType === 'mouse' && running && !paused) {
+    if (event.pointerType === 'mouse' && running && !paused && !settingsOpen && !collectionOpen) {
       lastMouse = renderer.pointerWorld(event);
       player.angle = Math.atan2(lastMouse.worldY - player.y, lastMouse.worldX - player.x);
     }
@@ -1136,7 +1348,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   canvas.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     if (!running && !won && !dead) return;
-    if (paused) return;
+    if (paused || settingsOpen || collectionOpen || won || dead) return;
     canvas.setPointerCapture?.(event.pointerId);
     lastMouse = renderer.pointerWorld(event); player.angle = Math.atan2(lastMouse.worldY - player.y, lastMouse.worldX - player.x);
     mouseHeld = true; shoot();
@@ -1151,18 +1363,22 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
 
   function bindTouchControls() {
     const controls = document.createElement('div'); controls.className = 'touch-controls'; controls.setAttribute('aria-label','Controles de movimento');
-    controls.innerHTML = '<button type="button" data-dir="up" aria-label="Mover para cima">↑</button><div><button type="button" data-dir="left" aria-label="Mover para esquerda">←</button><button type="button" data-dir="down" aria-label="Mover para baixo">↓</button><button type="button" data-dir="right" aria-label="Mover para direita">→</button></div><button type="button" class="touch-fire" data-fire="true">ATIRAR</button>';
-    canvasWrap.insertAdjacentElement('afterend',controls);
+    controls.innerHTML = '<button type="button" data-dir="up" aria-label="Mover para cima">↑</button><div><button type="button" data-dir="left" aria-label="Mover para esquerda">←</button><button type="button" data-dir="down" aria-label="Mover para baixo">↓</button><button type="button" data-dir="right" aria-label="Mover para direita">→</button></div><div class="touch-actions"><button type="button" class="touch-fire" data-fire="true">ATIRAR</button><button type="button" data-action="interact" aria-label="Interagir">E</button><button type="button" data-action="reload" aria-label="Recarregar">R</button><button type="button" data-action="map" aria-label="Abrir mapa">M</button></div>';
+    canvasWrap.appendChild(controls);
     const mapping = { up: ['w'], down: ['s'], left: ['a'], right: ['d'] };
     controls.querySelectorAll('[data-dir]').forEach(button => {
       const keys = mapping[button.dataset.dir];
-      const press = event => { event.preventDefault(); if (!running && !won && !dead) newGame(true); keys.forEach(k => keyState.add(k)); };
+      const press = event => { event.preventDefault(); if(!running||paused||won||dead||collectionOpen||settingsOpen)return;button.setPointerCapture?.(event.pointerId);keys.forEach(k => keyState.add(k)); };
       const release = event => { event.preventDefault(); keys.forEach(k => keyState.delete(k)); };
       button.addEventListener('pointerdown',press); button.addEventListener('pointerup',release); button.addEventListener('pointercancel',release); button.addEventListener('pointerleave',release);
     });
     const fireButton = controls.querySelector('[data-fire]');
     fireButton.addEventListener('pointerdown',event => { event.preventDefault(); keyState.add('f'); shoot(); });
     ['pointerup','pointercancel','pointerleave'].forEach(type => fireButton.addEventListener(type,() => keyState.delete('f')));
+    controls.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>{
+      if(!running||paused||won||dead||collectionOpen||settingsOpen)return;
+      if(button.dataset.action==='interact')tryInteract();else if(button.dataset.action==='reload')reload();else showMap=!showMap;
+    }));
   }
 
   function leaveTitle() {
@@ -1180,6 +1396,10 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     newGame(false, true);
   });
   closeSettingsButton?.addEventListener('click', closeSettings);
+  $('collectionButton')?.addEventListener('click',()=>toggleCollection());
+  $('pauseCollectionButton')?.addEventListener('click',()=>toggleCollection());
+  $('closeCollectionButton')?.addEventListener('click',()=>toggleCollection(false));
+  $('hudPauseButton')?.addEventListener('click',()=>togglePause());
   soundSetting?.addEventListener('change', () => { soundOn = soundSetting.checked; settings.sound = soundOn; if (soundButton) { soundButton.classList.toggle('sound-muted', !soundOn); soundButton.textContent = soundOn ? '♫' : '♪̸'; } persistSettings(); if (soundOn) tone(660,.06,'sine',.03); });
   volumeSetting?.addEventListener('input', () => { settings.volume = Number(volumeSetting.value); audioPlayer.setVolume(settings.volume); persistSettings(); });
   brightnessSetting?.addEventListener('input', () => { brightness = Number(brightnessSetting.value); settings.brightness = brightness; persistSettings(); });
@@ -1201,7 +1421,7 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
   });
   weaponButtons.forEach(button => button.addEventListener('click',() => setWeapon(button.dataset.weapon)));
   hudWeaponButtons.forEach(button => button.addEventListener('click', () => {
-    if (!running || paused || settingsOpen || won || dead) return;
+    if (!running || paused || settingsOpen || collectionOpen || won || dead) return;
     setWeapon(button.dataset.hudWeapon);
     canvas.focus({ preventScroll: true });
   }));
@@ -1225,12 +1445,19 @@ import { loadCampaignSave, saveCampaign, clearCampaignSave, loadSettings, saveSe
     }
     const dtMs = lastFrame ? Math.min(time - lastFrame, 40) : 16; lastFrame = time;
     const dt = dtMs / 1000;
-    const playing = running && !paused && !settingsOpen && !won && !dead;
+    const playing = running && !paused && !settingsOpen && !collectionOpen && !won && !dead;
     if (playing) {
       elapsed = time - startTime;
       fireCooldown = Math.max(0,fireCooldown - dtMs); damageCooldown = Math.max(0,damageCooldown - dt); hitFlash = Math.max(0,hitFlash - dt); wallBounceCooldown = Math.max(0, wallBounceCooldown - dt);
       if (reloadTimer > 0) { reloadTimer -= dt; if (reloadTimer <= 0) finishReload(); }
-      updatePlayer(dt); updateEnemies(dt,time); updateBullets(dt); updateHostileBullets(dt); updateParticles(dt);
+      updatePlayer(dt);
+      // A phase may end the run; later combat and rewards must respect that result.
+      if(running&&!won&&!dead)updateEnemies(dt,time);
+      if(running&&!won&&!dead)updateBullets(dt);
+      if(running&&!won&&!dead)updateHostileBullets(dt);
+      if(running&&!won&&!dead)updateChallenge();
+      if(running&&!won&&!dead)updateInteractionHint();
+      updateParticles(dt);
       if (time - lastThreatCheck > 300) {
         const nearestThreat = enemies.filter(e => e.alive).reduce((best,e) => Math.min(best,dist(e.x,e.y,player.x,player.y)), 99);
         audioPlayer.setThreat(nearestThreat < 3 ? 1 : nearestThreat < 6 ? .68 : nearestThreat < 10 ? .3 : 0);
