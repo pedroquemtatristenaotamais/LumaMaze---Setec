@@ -1,0 +1,27 @@
+[
+  {
+    "mode": "baseline",
+    "fps": 33.68882687132463,
+    "medianInterval": 33.30000000000018,
+    "p95Interval": 33.400000000000546,
+    "metrics": null
+  },
+  {
+    "mode": "final",
+    "fps": 59.80384339366877,
+    "medianInterval": 16.699999999999818,
+    "p95Interval": 16.799999999999272,
+    "metrics": {
+      "quality": "high",
+      "renderMs": 4.020852808205083,
+      "cachedChunks": 12,
+      "cacheBytes": 7990272,
+      "chunkBuilds": 0,
+      "lightTraces": 0,
+      "mode": "high",
+      "ambientLights": 6,
+      "projectileLights": 0,
+      "renderScale": 1
+    }
+  }
+]

@@ -19,7 +19,11 @@ export function clearCampaignSave() {
 }
 
 export function loadSettings() {
-  const defaults = { sound: true, volume: 0.65, brightness: 0.5, reducedMotion: false };
+  const defaults = {
+    sound: true, volume: 0.65, brightness: 0.5,
+    reducedMotion: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+    graphicsQuality: 'auto', showFps: false
+  };
   try { return { ...defaults, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')) }; }
   catch { return defaults; }
 }

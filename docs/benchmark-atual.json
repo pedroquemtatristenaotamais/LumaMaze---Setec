@@ -1,0 +1,58 @@
+[
+  {
+    "name": "normal-stage3",
+    "mode": "final",
+    "viewport": "1440x900 DPR1",
+    "cells": "106x78",
+    "idle": {
+      "median": 3.2000000029802322,
+      "p95": 4.5,
+      "mean": 3.334736842387601
+    },
+    "projectiles": {
+      "median": 3.7999999970197678,
+      "p95": 5,
+      "mean": 3.938947368609278
+    },
+    "metrics": {
+      "quality": "high",
+      "renderMs": 3.832866598163812,
+      "cachedChunks": 20,
+      "cacheBytes": 13317120,
+      "chunkBuilds": 0,
+      "lightTraces": 0,
+      "mode": "high",
+      "ambientLights": 8,
+      "projectileLights": 8,
+      "renderScale": 1
+    }
+  },
+  {
+    "name": "hard-stage8",
+    "mode": "final",
+    "viewport": "1440x900 DPR1",
+    "cells": "166x114",
+    "idle": {
+      "median": 3.4000000059604645,
+      "p95": 4.4000000059604645,
+      "mean": 3.577894735963721
+    },
+    "projectiles": {
+      "median": 4.399999991059303,
+      "p95": 5.800000011920929,
+      "mean": 4.573684210996879
+    },
+    "metrics": {
+      "quality": "high",
+      "renderMs": 4.360131292471881,
+      "cachedChunks": 12,
+      "cacheBytes": 7990272,
+      "chunkBuilds": 0,
+      "lightTraces": 0,
+      "mode": "high",
+      "ambientLights": 8,
+      "projectileLights": 8,
+      "renderScale": 1
+    }
+  }
+]

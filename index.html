@@ -5,38 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#090705" />
   <title>Última Chama — O Labirinto Macabro</title>
+  <link rel="icon" type="image/png" href="colegio-logo.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <section class="title-screen" id="titleScreen" role="dialog" aria-modal="true" aria-labelledby="titleGameName">
-    <div class="title-screen-glow title-glow-left" aria-hidden="true"></div>
-    <div class="title-screen-glow title-glow-right" aria-hidden="true"></div>
-    <div class="title-screen-embers" aria-hidden="true">
-      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-    </div>
+    <canvas id="titleFxCanvas" class="title-scene" aria-hidden="true"></canvas>
+    <div class="title-scene-shade" aria-hidden="true"></div>
     <div class="title-frame" aria-hidden="true"></div>
+    <div class="title-school-lockup">
+      <img class="title-school-logo" src="colegio-logo.png" alt="Logo do Colégio Estadual Barbosa Ferraz" width="70" height="70" />
+      <p>COLÉGIO ESTADUAL<br /><strong>BARBOSA FERRAZ</strong><span>APRESENTA</span></p>
+    </div>
+    <p class="title-project-label">PROJETO ESCOLAR <span>2 DS · 2026</span></p>
     <div class="title-content">
-      <p class="title-overline"><span></span> UMA AVENTURA NAS CATACUMBAS <span></span></p>
-      <div class="title-logo-wrap">
-        <div class="title-logo-halo"></div>
-        <img class="title-school-logo" src="assets/colegio-logo.png" alt="Logo do Colégio Estadual Barbosa Ferraz" />
-      </div>
-      <p class="title-school-caption">COLÉGIO ESTADUAL BARBOSA FERRAZ</p>
+      <p class="title-overline"><span></span> QUANDO TUDO SE APAGAR <span></span></p>
       <h1 id="titleGameName" class="title-game-name">ÚLTIMA <span>CHAMA</span></h1>
       <p class="title-game-subtitle">O LABIRINTO MACABRO</p>
-      <div class="title-mark-divider"><span></span><strong>2 DS</strong><span></span></div>
-      <p class="title-author">UM JOGO DE <strong>PEDRO</strong></p>
-      <button id="titleStartButton" class="title-start-button" type="button">INICIAR AVENTURA <span>↗</span></button>
-      <button id="titleContinueButton" class="title-continue-button hidden" type="button">CONTINUAR CAMPANHA <span>↗</span></button>
-      <p class="title-lower-hint"><span class="title-flame-dot"></span> A CHAMA É SUA ÚNICA COMPANHIA</p>
+      <div class="title-mark-divider" aria-hidden="true"><span></span><strong>✦</strong><span></span></div>
+      <p class="title-story">Há algo vivo sob estas ruínas.<br />Encontre a saída. Proteja a última luz.</p>
+      <button id="titleStartButton" class="title-start-button" type="button"><span class="title-button-flame" aria-hidden="true">♨</span> INICIAR AVENTURA <span aria-hidden="true">→</span></button>
+      <button id="titleContinueButton" class="title-continue-button hidden" type="button">CONTINUAR CAMPANHA <span aria-hidden="true">→</span></button>
+      <p class="title-lower-hint">USE FONES. SIGA A LUZ.</p>
     </div>
-    <div class="title-corner-label title-corner-left">CAPÍTULO I</div>
-    <div class="title-corner-label title-corner-right">A CRIPTA</div>
+    <div class="title-corner-label title-corner-left"><span class="title-flame-dot" aria-hidden="true"></span> OITO FASES NA ESCURIDÃO</div>
+    <p class="title-author">CONCEBIDO POR <strong>PEDRO</strong></p>
+    <div class="title-corner-label title-corner-right">EXPLORE · RESISTA · SOBREVIVA</div>
   </section>
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
 
-  <main class="app-shell">
+  <main class="app-shell" inert>
     <header class="topbar">
       <a class="brand" href="#" aria-label="Última Chama — início">
         <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
@@ -71,6 +70,7 @@
         <div class="canvas-wrap" id="canvasWrap">
           <canvas id="mazeCanvas" aria-label="Labirinto macabro em pixel art. Explore as catacumbas, encontre armas e use tiros que ricocheteiam nas paredes." role="img"></canvas>
           <div class="canvas-vignette"></div>
+          <output id="performanceReadout" class="performance-readout hidden" aria-label="Desempenho do jogo"></output>
           <div class="minimal-hud" aria-label="Estado do personagem">
             <div class="hud-vitals">
               <div class="hud-health-head"><span>VIDA</span><strong id="hudHealthValue">100%</strong></div>
@@ -83,21 +83,32 @@
           </div>
 
           <div class="overlay" id="startOverlay">
-            <div class="overlay-orb"><span>♨</span></div>
-            <p class="overlay-kicker">AS CATACUMBAS ESTÃO VIVAS</p>
-            <h2>Não confie<br /><em>na escuridão.</em></h2>
-            <p class="overlay-description">Encontre armas perdidas. Use ricochetes para atingir o que espreita além das paredes.</p>
-            <label class="difficulty-label" for="difficultySelect">ESCOLHA SEU PESADELO</label>
+            <p class="overlay-kicker">A DESCIDA COMEÇA AQUI</p>
+            <h2>Escolha a sua<br /><em>escuridão.</em></h2>
+            <p class="overlay-description">Oito fases. Uma última chama. Encontre armas, descubra passagens e alcance a saída.</p>
+            <label class="difficulty-label" for="difficultySelect">TAMANHO DO LABIRINTO</label>
             <div class="select-wrap">
-              <select id="difficultySelect">
-                <option value="easy">Catacumbas · curto</option>
-                <option value="normal" selected>Cripta · profundo</option>
-                <option value="hard">Abismo · enorme</option>
+              <select id="difficultySelect" aria-describedby="sizeGuide">
+                <option value="easy">Catacumbas · pequeno</option>
+                <option value="normal" selected>Cripta · médio</option>
+                <option value="hard">Abismo · grande</option>
               </select>
               <span>⌄</span>
             </div>
+            <div class="size-guide" id="sizeGuide">
+              <div class="size-choice size-easy"><span>01 / PEQUENO</span><strong>Catacumbas</strong><p>Rotas curtas.<br />Seu primeiro mergulho.</p></div>
+              <div class="size-choice size-normal"><span>02 / MÉDIO</span><strong>Cripta</strong><p>Mais caminhos.<br />Mais segredos à espera.</p></div>
+              <div class="size-choice size-hard"><span>03 / GRANDE</span><strong>Abismo</strong><p>Ruínas extensas.<br />Uma longa sobrevivência.</p></div>
+            </div>
             <button id="startButton" class="primary-button" type="button">Entrar no labirinto <span>↗</span></button>
-            
+            <div class="expedition-controls" aria-label="Como jogar">
+              <p><kbd>WASD / ↑↓←→</kbd><span>Mover</span></p>
+              <p><kbd>MOUSE / F</kbd><span>Mirar e atirar</span></p>
+              <p><kbd>E</kbd><span>Interagir</span></p>
+              <p><kbd>M</kbd><span>Mapa</span></p>
+              <p><kbd>O</kbd><span>Ajustes</span></p>
+              <p><kbd>ESPAÇO</kbd><span>Pausar</span></p>
+            </div>
           </div>
 
           <div class="overlay overlay-small hidden" id="pauseOverlay">
@@ -132,6 +143,8 @@
             <label class="setting-row"><span>Volume dos sons</span><input id="volumeSetting" type="range" min="0" max="1" step="0.05" value="0.65" /></label>
             <label class="setting-row"><span>Brilho do cenário</span><input id="brightnessSetting" type="range" min="0" max="1" step="0.05" value="0.5" /></label>
             <label class="setting-check"><input id="motionSetting" type="checkbox" /> Reduzir efeitos animados</label>
+            <label class="setting-row"><span>Qualidade visual</span><select id="graphicsQualitySetting"><option value="auto" selected>Automática</option><option value="high">Alta</option><option value="low">Leve</option></select></label>
+            <label class="setting-check"><input id="fpsSetting" type="checkbox" /> Mostrar desempenho (FPS)</label>
             <button id="closeSettingsButton" class="primary-button" type="button">Voltar ao labirinto <span>→</span></button>
             <p class="keyboard-hint">Tecla <kbd>O</kbd> abre os ajustes · <kbd>M</kbd> mostra o mapa</p>
           </div>

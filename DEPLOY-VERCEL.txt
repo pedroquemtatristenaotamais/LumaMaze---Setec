@@ -29,7 +29,7 @@ OPÇÃO B — PUBLICAR USANDO GITHUB
 6. Clique em Deploy. O Vercel fornecerá um endereço público.
 
 IMPORTANTE
-- Aponte a raiz do projeto para a pasta que contém index.html, style.css, game.js, js/ e assets/.
+- Aponte a raiz do projeto para a pasta que contém index.html, style.css, game.js, renderer.js e colegio-logo.png (os módulos ficam na raiz).
 - O jogo usa módulos JavaScript; o Vercel os serve normalmente por HTTPS.
 - O salvamento da campanha e as configurações ficam no navegador do visitante. O progresso local não é compartilhado entre dispositivos.
 - Não é necessário adicionar chaves secretas ou variáveis de ambiente.

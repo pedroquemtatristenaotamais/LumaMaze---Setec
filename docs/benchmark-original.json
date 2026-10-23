@@ -1,0 +1,36 @@
+[
+  {
+    "name": "normal-stage3",
+    "mode": "baseline",
+    "viewport": "1440x900 DPR1",
+    "cells": "106x78",
+    "idle": {
+      "median": 12,
+      "p95": 15,
+      "mean": 12.449473683928188
+    },
+    "projectiles": {
+      "median": 13.899999991059303,
+      "p95": 16.19999998807907,
+      "mean": 14.201052632143623
+    },
+    "metrics": null
+  },
+  {
+    "name": "hard-stage8",
+    "mode": "baseline",
+    "viewport": "1440x900 DPR1",
+    "cells": "166x114",
+    "idle": {
+      "median": 13,
+      "p95": 18.5,
+      "mean": 13.784210526158935
+    },
+    "projectiles": {
+      "median": 14.100000008940697,
+      "p95": 17.299999997019768,
+      "mean": 14.506315790508923
+    },
+    "metrics": null
+  }
+]

@@ -1,53 +1,71 @@
-ÚLTIMA CHAMA — O LABIRINTO MACABRO
+# ÚLTIMA CHAMA — O LABIRINTO MACABRO
 
-Jogo 2D de terror em pixel art, feito em HTML, CSS e JavaScript modular.
+Jogo de exploração e combate em HTML, CSS e JavaScript modular, sem bibliotecas ou serviços externos durante a partida.
 
-COMO EXECUTAR
-1. Extraia a pasta do ZIP.
-2. Abra a pasta no Visual Studio Code e execute index.html com a extensão Live Server, ou utilize outro servidor HTTP local.
-3. Abra o endereço local no Chrome ou Firefox. Como o projeto usa ES Modules, não abra o HTML diretamente pelo caminho file://.
+## Jogar localmente
 
-CONTROLES
-WASD ou setas: movimentar-se
-Mouse + clique esquerdo: mirar e atirar
-1, 2, 3: selecionar pistola, shotgun ou AK-47 (depois de coletadas)
-R: recarregar
-E: interagir com painéis secretos e baús
-M: abrir/fechar o mapa opcional
-O: abrir configurações de som, volume, brilho e efeitos reduzidos
-Espaço ou Esc: pausar (Esc fecha as configurações quando abertas)
+Na pasta do projeto, execute:
 
-COMBATE E EXPLORAÇÃO
-- O jogador começa apenas com a tocha; as armas são encontradas no mapa.
-- Pistola, shotgun e AK-47 usam carregador e munição reserva. Os tiros podem ricochetear na pedra, com limite de alcance e de rebotes.
-- Inimigos diferentes têm padrões próprios: esqueletos comuns, guerreiros resistentes, arqueiros que disparam à distância e esqueletos velozes. Nas fases 3, 6 e 8 há um Guardião Amaldiçoado, com mais vida, ataque especial e chave para a saída.
-- Kits médicos e caixas de munição são coletáveis. Inimigos podem deixar recursos ao morrer.
-- Encontre a chave antes de tentar abrir a saída. Nas fases com guardião, derrote-o e recolha a chave que ele deixa cair.
-- Procure painéis de pedra rachados e pressione E perto deles para descobrir passagens secretas. Baús escondidos também são abertos com E.
-- A campanha tem oito fases; o tamanho, a quantidade de inimigos e a dificuldade aumentam progressivamente. O progresso é salvo automaticamente ao concluir uma fase e pode ser retomado na tela de título.
-- O mapa opcional é revelado com M. Passagens secretas e seus tesouros só são mostrados quando descobertos.
+```bash
+npm start
+```
 
-AMBIENTES E ATMOSFERA
-- Três regiões especiais são geradas nos labirintos: cripta inundada, capela abandonada e bosque tomado por fungos.
-- Pedra cinza tipo cobblestone, musgo, raízes, água com ondulações, entulho, ossos, fungos bioluminescentes, poeira no ar e emblemas do Barbosa Ferraz com a inscrição 2 DS.
-- A tocha e os projéteis emitem iluminação dinâmica que respeita as paredes. O áudio ambiente aumenta de intensidade quando inimigos estão próximos.
-- A tela inicial mostra o nome Última Chama, a logo escolar e o crédito “Um jogo de Pedro”.
+Abra **http://localhost:8080**. O servidor local usa apenas os módulos nativos do Node, sem `npm install`. Também funciona com a extensão Live Server do VS Code ou qualquer servidor estático. Não abra pelo protocolo `file://`, pois os módulos JavaScript precisam de HTTP.
 
-CONFIGURAÇÕES
-Pressione O durante o jogo para alternar sons, ajustar volume, brilho e reduzir efeitos animados. As configurações são salvas localmente no navegador.
+## Controles
 
-ESTRUTURA DO CÓDIGO
-- game.js: ciclo da partida, movimentação, colisões, inimigos, combate e progressão
-- js/config.js: balanceamento, tamanhos de mapas e armas
-- js/maze-generator.js: geração procedural, corredores e três regiões temáticas
-- js/enemy-types.js: atributos e escolha das classes de inimigos
-- js/renderer.js: renderização pixel art, câmera, sombras, luzes, efeitos e mapa
-- js/audio.js: efeitos e ambiente via Web Audio
-- js/hud.js: barra de vida e munição
-- js/save-system.js: progresso da campanha e configurações locais
-- assets/colegio-logo.png: emblema escolar usado na tela de título e nas placas do cenário
+| Ação | Controle |
+| --- | --- |
+| Movimentar | WASD ou setas |
+| Mirar e atirar | Mouse + botão esquerdo; F atira na direção atual |
+| Trocar arma | 1 / 2 / 3, depois de encontrar a arma |
+| Recarregar | R |
+| Abrir passagem secreta / baú | E |
+| Mapa | M |
+| Configurações | O |
+| Pausar / continuar | Espaço ou Esc |
 
-O jogo utiliza apenas recursos locais, sem bibliotecas externas obrigatórias.
+No celular há controles de movimento e disparo. O jogo foi pensado principalmente para teclado e mouse.
 
-HOSPEDAGEM NO VERCEL
-Veja DEPLOY-VERCEL.txt para instruções de publicação. O projeto é estático e não exige etapa de build; configure Framework Preset como Other e Output Directory como . ao importar pelo painel. Há um vercel.json incluído.
+## Exploração
+
+Os três tamanhos — Catacumbas, Cripta e Abismo — usam geração procedural e crescem ao longo das oito fases. Os mapas contêm regiões inundadas, capelas e jardins de fungos, passagens secretas, armas e recursos. Encontre a chave para sair. Nas fases 3, 6 e 8, um guardião carrega a chave. O progresso é salvo ao concluir uma fase; use “Continuar campanha” na abertura.
+
+A abertura usa fogo procedural, tochas e brasas em Canvas, sem vídeo. A iluminação do jogo, a animação de água e fungos e os efeitos de combate também são feitos em JavaScript e Canvas 2D.
+
+## Visual e desempenho
+
+Abra os ajustes com **O**:
+
+- **Automática:** ajusta a carga visual conforme o custo da renderização.
+- **Alta:** mais luzes e detalhes animados.
+- **Leve:** menos luzes, partículas e resolução, mantendo a lógica da partida.
+- **Brilho:** ajusta a visibilidade das ruínas.
+- **Reduzir movimento:** reduz animações; a preferência do sistema é respeitada na primeira execução.
+- **Mostrar FPS:** exibe medição opcional durante a partida.
+
+O desenho estático do labirinto é guardado em blocos limitados em memória. As luzes fixas reutilizam seus cálculos de visibilidade e os inimigos compartilham o cálculo de perseguição. Isso permite mais conteúdo sem recalcular o mesmo cenário e caminho a cada quadro. Ao esconder a abertura, seus efeitos param; a partida pausa ao sair da aba.
+
+FPS depende do navegador, da resolução e do equipamento. Os resultados medidos e o método de comparação ficam em `docs/VERIFICACAO.md`.
+
+## Arquivos
+
+- `index.html`, `style.css`: telas, HUD, controles e ajustes.
+- `title-scene.js`: portal, tochas, fogo e brasas da abertura.
+- `game.js`: ciclo da partida, combate, coleta, inimigos e progressão.
+- `renderer.js`: câmera, cenário em cache, materiais, sombras e efeitos.
+- `maze-generator.js`, `pathfinding.js`: geração e navegação.
+- `config.js`, `enemy-types.js`: tamanhos, armas e classes de inimigos.
+- `audio.js`, `hud.js`, `save-system.js`: áudio procedural, indicadores e persistência local.
+- `colegio-logo.png`: identidade do Colégio Estadual Barbosa Ferraz.
+- `tools/serve.js`: servidor local de desenvolvimento; não é necessário na hospedagem.
+
+## Verificar
+
+```bash
+npm test
+```
+
+Os testes usam o executor nativo do Node. A hospedagem continua estática: publique os arquivos do projeto; não há build. Consulte `DEPLOY-VERCEL.txt` se usar Vercel.
+
+Créditos: um jogo de **Pedro**, **2 DS**, Colégio Estadual Barbosa Ferraz.

@@ -1,0 +1,171 @@
+[
+  {
+    "size": "easy",
+    "stage": 1,
+    "rows": 54,
+    "cols": 70,
+    "enemyCount": 12,
+    "keyCount": 1,
+    "boss": false,
+    "types": [
+      "emberling",
+      "skeleton"
+    ]
+  },
+  {
+    "size": "easy",
+    "stage": 3,
+    "rows": 62,
+    "cols": 86,
+    "enemyCount": 18,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "skeleton",
+      "warrior",
+      "archer",
+      "guardian"
+    ]
+  },
+  {
+    "size": "easy",
+    "stage": 8,
+    "rows": 82,
+    "cols": 126,
+    "enemyCount": 33,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "archer",
+      "skeleton",
+      "runner",
+      "warrior",
+      "guardian"
+    ]
+  },
+  {
+    "size": "normal",
+    "stage": 1,
+    "rows": 70,
+    "cols": 90,
+    "enemyCount": 16,
+    "keyCount": 1,
+    "boss": false,
+    "types": [
+      "emberling",
+      "skeleton"
+    ]
+  },
+  {
+    "size": "normal",
+    "stage": 3,
+    "rows": 78,
+    "cols": 106,
+    "enemyCount": 22,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "skeleton",
+      "warrior",
+      "archer",
+      "guardian"
+    ]
+  },
+  {
+    "size": "normal",
+    "stage": 8,
+    "rows": 98,
+    "cols": 146,
+    "enemyCount": 38,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "skeleton",
+      "archer",
+      "runner",
+      "warrior",
+      "guardian"
+    ]
+  },
+  {
+    "size": "hard",
+    "stage": 1,
+    "rows": 86,
+    "cols": 110,
+    "enemyCount": 23,
+    "keyCount": 1,
+    "boss": false,
+    "types": [
+      "emberling",
+      "skeleton"
+    ]
+  },
+  {
+    "size": "hard",
+    "stage": 3,
+    "rows": 94,
+    "cols": 126,
+    "enemyCount": 30,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "archer",
+      "skeleton",
+      "warrior",
+      "guardian"
+    ]
+  },
+  {
+    "size": "hard",
+    "stage": 8,
+    "rows": 114,
+    "cols": 166,
+    "enemyCount": 45,
+    "keyCount": 0,
+    "boss": true,
+    "types": [
+      "emberling",
+      "wraith",
+      "warrior",
+      "skeleton",
+      "archer",
+      "runner",
+      "guardian"
+    ]
+  },
+  {
+    "desktop": "pass",
+    "errors": [],
+    "requests": []
+  },
+  {
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 2
+    },
+    "mobile": "pass"
+  },
+  {
+    "viewport": {
+      "width": 844,
+      "height": 390,
+      "deviceScaleFactor": 1
+    },
+    "mobile": "pass"
+  },
+  {
+    "animationLifecycle": "pass",
+    "systemReducedMotion": "pass"
+  }
+]

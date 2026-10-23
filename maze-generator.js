@@ -1,12 +1,22 @@
 // Procedural maze construction, corridor widening and themed chambers.
-const randInt = max => Math.floor(Math.random() * max);
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+
+// Numeric seeds make layouts reproducible for verification; normal play stays random.
+export function createSeededRandom(seed) {
+  let value = Number(seed) >>> 0;
+  return () => {
+    value = (value + 0x6D2B79F5) >>> 0;
+    let mixed = Math.imul(value ^ value >>> 15, value | 1);
+    mixed ^= mixed + Math.imul(mixed ^ mixed >>> 7, mixed | 61);
+    return ((mixed ^ mixed >>> 14) >>> 0) / 4294967296;
+  };
+}
 
 /**
  * Cell values: 1 = solid wall, 0 = regular corridor,
  * 2 = flooded crypt, 3 = abandoned chapel, 4 = fungal grove.
  */
-function stampThemedRooms(grid) {
+function stampThemedRooms(grid, rng) {
   const height = grid.length;
   const width = grid[0].length;
   const specs = [
@@ -31,7 +41,7 @@ function stampThemedRooms(grid) {
         );
         if (overlaps) continue;
         const targetDistance = Math.hypot((x - targetX) * 1.0, (y - targetY) * 1.12);
-        candidates.push({ x, y, score: targetDistance + Math.random() * 2.4 });
+        candidates.push({ x, y, score: targetDistance + rng() * 2.4 });
       }
     }
     candidates.sort((a, b) => a.score - b.score);
@@ -49,7 +59,9 @@ function stampThemedRooms(grid) {
   }
 }
 
-export function makeMaze(width, height, stage = 1) {
+export function makeMaze(width, height, stage = 1, random = Math.random) {
+  const rng = typeof random === 'function' ? random : createSeededRandom(random);
+  const randInt = max => Math.floor(rng() * max);
   const grid = Array.from({ length: height }, () => Array(width).fill(1));
   const stack = [{ x: 1, y: 1 }];
   grid[1][1] = 0;
@@ -57,7 +69,10 @@ export function makeMaze(width, height, stage = 1) {
 
   while (stack.length) {
     const current = stack[stack.length - 1];
-    const dirs = directions.slice().sort(() => Math.random() - .5);
+    const dirs = directions.slice();
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = randInt(i + 1); [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+    }
     let carved = false;
     for (const dir of dirs) {
       const nx = current.x + dir.x;
@@ -77,7 +92,7 @@ export function makeMaze(width, height, stage = 1) {
   const loopChance = .105 + Math.min(stage, 8) * .007;
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
-      if (grid[y][x] !== 1 || Math.random() > loopChance) continue;
+      if (grid[y][x] !== 1 || rng() > loopChance) continue;
       const horizontal = grid[y][x - 1] === 0 && grid[y][x + 1] === 0;
       const vertical = grid[y - 1][x] === 0 && grid[y + 1][x] === 0;
       if (horizontal || vertical) grid[y][x] = 0;
@@ -89,9 +104,9 @@ export function makeMaze(width, height, stage = 1) {
   for (let i = 0; i < chambers; i++) {
     const x = 2 + randInt(Math.max(1, width - 4));
     const y = 2 + randInt(Math.max(1, height - 4));
-    if (grid[y][x] !== 0 || Math.random() > .72) continue;
-    const roomW = Math.random() < .45 ? 2 : 3;
-    const roomH = Math.random() < .45 ? 2 : 3;
+    if (grid[y][x] !== 0 || rng() > .72) continue;
+    const roomW = rng() < .45 ? 2 : 3;
+    const roomH = rng() < .45 ? 2 : 3;
     for (let ry = 0; ry < roomH; ry++) {
       for (let rx = 0; rx < roomW; rx++) {
         const tx = x + rx - 1, ty = y + ry - 1;
@@ -100,7 +115,7 @@ export function makeMaze(width, height, stage = 1) {
     }
   }
 
-  stampThemedRooms(grid);
+  stampThemedRooms(grid, rng);
   return grid;
 }
 

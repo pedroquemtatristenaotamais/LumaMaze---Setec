@@ -1,6 +1,7 @@
 // Pixel-art rendering, camera tracking, lighting and canvas sizing live here.
 export function createRenderer({ canvas, canvasWrap, getState }) {
-  const ctx = canvas.getContext('2d');
+  const mainCtx = canvas.getContext('2d', { alpha: false });
+  let ctx = mainCtx;
   const darknessCanvas = document.createElement('canvas');
   const darknessCtx = darknessCanvas.getContext('2d');
 
@@ -11,9 +12,20 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
   let pickupToast = '', pickupToastUntil = 0, hitFlash = 0;
   let tile = 24, offsetX = 0, offsetY = 0, viewWidth = 0, viewHeight = 0;
   let mapMarks = [], decorations = [], ambientLights = [], lastMazeRef = null, projectileLights = [];
+  let floatingTexts = [], combatPulse = 0, graphicsQuality = 'auto', activeQuality = 'high';
+  let lastDoorSignature = '', doorRevision = 0, torchLight = null, lastTorchTrace = -Infinity;
+  let staticLights = [], animatedTiles = [], wallThemes = new Uint8Array(0), bakingStatic = false;
+  let frameNumber = 0, renderAverage = 0, lastQualityChange = 0, nextAmbientSelection = 0;
+  let cachePixels = 0, chunkBuilds = 0, lightTraces = 0, miniMapCache = null, cacheScale = 1;
+  const chunkTiles = 12, maxCachePixels = 8 * 1024 * 1024;
+  const chunks = new Map(), lightSprites = new Map(), rayDirections = new Map();
+  const projectileCache = new WeakMap();
+  const closedDoors = new Set();
+  const flameFrames = [];
+  const metrics = { quality: 'high', renderMs: 0, cachedChunks: 0, cacheBytes: 0, chunkBuilds: 0, lightTraces: 0 };
   const schoolLogo = new Image();
   schoolLogo.decoding = 'async';
-  schoolLogo.src = new URL('../assets/colegio-logo.png', import.meta.url).href;
+  schoolLogo.src = new URL('./colegio-logo.png', import.meta.url).href;
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const noiseAt = (x, y, salt = 0) => {
     const n = Math.sin(x * 127.1 + y * 311.7 + salt * 74.7) * 43758.5453;
@@ -27,19 +39,49 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     maze = nextMaze; cols = state.cols; rows = state.rows; player = state.player; exit = state.exit;
     coins = state.coins; weaponPickups = state.weaponPickups; lootPickups = state.lootPickups || []; secretDoors = state.secretDoors || []; enemies = state.enemies;
     bullets = state.bullets; hostileBullets = state.hostileBullets || []; particles = state.particles; pickupToast = state.pickupToast;
-    hasKey = !!state.hasKey; objectiveText = state.objectiveText || ''; showMap = !!state.showMap; brightness = Number(state.brightness ?? .5); reducedMotion = !!state.reducedMotion;
+    hasKey = !!state.hasKey; objectiveText = state.objectiveText || ''; showMap = !!state.showMap; brightness = clamp(Number(state.brightness ?? .5), 0, 1); reducedMotion = !!state.reducedMotion;
+    floatingTexts = state.floatingTexts || []; combatPulse = state.combatPulse || 0;
+    const requestedQuality = ['auto', 'high', 'low'].includes(state.graphicsQuality) ? state.graphicsQuality : 'auto';
+    if (requestedQuality !== graphicsQuality) {
+      graphicsQuality = requestedQuality;
+      setQuality(graphicsQuality === 'low' ? 'low' : 'high');
+    }
     pickupToastUntil = state.pickupToastUntil; hitFlash = state.hitFlash;
-    if (mazeChanged) { lastMazeRef = nextMaze; rebuildMapMarks(); }
+    const doorSignature = secretDoors.map(door => `${door.x},${door.y}:${door.opened ? 1 : 0}`).join('|');
+    if (mazeChanged || doorSignature !== lastDoorSignature) {
+      lastDoorSignature = doorSignature; doorRevision++; closedDoors.clear();
+      for (const door of secretDoors) if (!door.opened) closedDoors.add(door.y * cols + door.x);
+      torchLight = null; nextAmbientSelection = 0;
+    }
+    if (mazeChanged) {
+      lastMazeRef = nextMaze; clearChunkCache(); miniMapCache = null;
+      rebuildMapMarks(); rebuildTileMetadata();
+    }
+  }
+
+  function clearChunkCache() {
+    for (const chunk of chunks.values()) { chunk.canvas.width = 0; chunk.canvas.height = 0; }
+    chunks.clear(); cachePixels = 0;
+  }
+
+  function setQuality(quality) {
+    if (activeQuality === quality) return;
+    activeQuality = quality; nextAmbientSelection = 0; torchLight = null;
+    if (viewWidth) renderResizeCanvas();
   }
 
   function renderResizeCanvas() {
     const rect = canvasWrap.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, activeQuality === 'low' ? 1 : 1.5);
     viewWidth = Math.max(1, rect.width); viewHeight = Math.max(1, rect.height);
     canvas.width = Math.round(viewWidth * dpr); canvas.height = Math.round(viewHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     darknessCanvas.width = Math.max(1, Math.ceil(viewWidth)); darknessCanvas.height = Math.max(1, Math.ceil(viewHeight));
-    tile = clamp(Math.floor(Math.min(viewWidth / 19, viewHeight / 12.5)), 15, 34);
+    const nextTile = clamp(Math.floor(Math.min(viewWidth / 19, viewHeight / 12.5)), 15, 34);
+    const nextScale = viewWidth * viewHeight > 3000000 || activeQuality === 'low' ? .75 : 1;
+    if (nextTile !== tile || nextScale !== cacheScale) clearChunkCache();
+    tile = nextTile; cacheScale = nextScale; miniMapCache = null;
     updateCamera();
   }
 
@@ -55,6 +97,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     mapMarks = [];
     if (!maze || !maze.length || !rows || !cols) {
       decorations = [];
+      staticLights = []; ambientLights = [];
       return;
     }
 
@@ -157,6 +200,25 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     candidates.sort((a, b) => a.rank - b.rank);
     const maxDecorations = Math.min(420, Math.max(78, Math.floor(cols * rows * .065)));
     decorations = candidates.slice(0, maxDecorations);
+    staticLights = decorations.filter(deco => ['lantern', 'fungus', 'fungus-heart', 'chapel-candle'].includes(deco.type)).map(deco => ({
+      deco, worldX: deco.x + .5, worldY: deco.y + .5,
+      radiusTiles: deco.type === 'lantern' ? 2.9 : deco.type === 'fungus-heart' ? 3.25 : deco.type === 'chapel-candle' ? 1.6 : 2.15,
+      color: deco.type === 'lantern' || deco.type === 'chapel-candle' ? '#ffad59' : '#62e1a4',
+      power: deco.type === 'lantern' ? .78 : deco.type === 'fungus-heart' ? .82 : deco.type === 'chapel-candle' ? .52 : .59,
+      revision: -1, boundary: null
+    }));
+    ambientLights = []; nextAmbientSelection = 0;
+  }
+
+  function rebuildTileMetadata() {
+    wallThemes = new Uint8Array(cols * rows); animatedTiles = [];
+    if (!maze.length) return;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const cell = maze[y][x], theme = cell === 1 ? themedWallAt(x, y) : cell;
+      wallThemes[y * cols + x] = theme;
+      const vine = cell === 1 && noiseAt(x, y, 24) > .81;
+      if (vine || theme === 2 || theme === 4) animatedTiles.push({ x, y, wall: cell === 1, theme, vine, phase: noiseAt(x, y, 67) * 6.28 });
+    }
   }
 
   function drawMapMarks(time) {
@@ -209,72 +271,144 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
 
   function isOpenWorldCell(x, y) {
     const cx = Math.floor(x), cy = Math.floor(y);
-    if (!(cy >= 0 && cy < rows && cx >= 0 && cx < cols && maze[cy] && maze[cy][cx] !== 1)) return false;
-    return !secretDoors.some(door => !door.opened && door.x === cx && door.y === cy);
+    return cy >= 0 && cy < rows && cx >= 0 && cx < cols && maze[cy][cx] !== 1 && !closedDoors.has(cy * cols + cx);
   }
 
-  function traceProjectileLight(wx, wy, radiusTiles, rays = 28) {
-    const points = [];
-    for (let i = 0; i < rays; i++) {
-      const angle = (i / rays) * Math.PI * 2;
-      let visible = radiusTiles;
-      for (let distance = .10; distance <= radiusTiles; distance += .10) {
-        if (!isOpenWorldCell(wx + Math.cos(angle) * distance, wy + Math.sin(angle) * distance)) {
-          visible = Math.max(.025, distance - .10);
+  // Walk grid edges instead of testing ten substeps per tile. Boundaries stay
+  // in world coordinates so the camera can move without rebuilding shadows.
+  function traceProjectileLight(wx, wy, radiusTiles, rays = 24) {
+    lightTraces++;
+    let directions = rayDirections.get(rays);
+    if (!directions) {
+      directions = Array.from({ length: rays }, (_, i) => ({ x: Math.cos(i * Math.PI * 2 / rays), y: Math.sin(i * Math.PI * 2 / rays) }));
+      rayDirections.set(rays, directions);
+    }
+    return directions.map(direction => {
+      const dx = direction.x, dy = direction.y;
+      let cx = Math.floor(wx), cy = Math.floor(wy), distance = 0;
+      const sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
+      const stepX = Math.abs(dx) > 1e-8 ? 1 / Math.abs(dx) : Infinity;
+      const stepY = Math.abs(dy) > 1e-8 ? 1 / Math.abs(dy) : Infinity;
+      let edgeX = Math.abs(dx) > 1e-8 ? (dx < 0 ? wx - cx : cx + 1 - wx) * stepX : Infinity;
+      let edgeY = Math.abs(dy) > 1e-8 ? (dy < 0 ? wy - cy : cy + 1 - wy) * stepY : Infinity;
+      while (distance < radiusTiles) {
+        if (edgeX < edgeY) { distance = edgeX; edgeX += stepX; cx += sx; }
+        else { distance = edgeY; edgeY += stepY; cy += sy; }
+        if (distance >= radiusTiles) { distance = radiusTiles; break; }
+        if (!isOpenWorldCell(cx, cy)) {
+          // Reveal the near stone face, stopping before the back of that cell.
+          distance = Math.max(0, Math.min(distance + .38, Math.min(edgeX, edgeY) - .012));
           break;
         }
       }
-      points.push(screenPoint(wx + Math.cos(angle) * visible, wy + Math.sin(angle) * visible));
-    }
-    return points;
+      return { x: wx + dx * Math.min(distance, radiusTiles), y: wy + dy * Math.min(distance, radiusTiles) };
+    });
   }
 
   function tracePath(targetCtx, points) {
     if (!points.length) return;
     targetCtx.beginPath();
-    targetCtx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) targetCtx.lineTo(points[i].x, points[i].y);
+    targetCtx.moveTo(offsetX + points[0].x * tile, offsetY + points[0].y * tile);
+    for (let i = 1; i < points.length; i++) targetCtx.lineTo(offsetX + points[i].x * tile, offsetY + points[i].y * tile);
     targetCtx.closePath();
   }
 
-  function prepareProjectileLights() {
-    projectileLights = [...bullets, ...hostileBullets].map(b => {
-      const radiusTiles = b.size > .06 ? 1.75 : 1.52;
-      return {
-        bullet: b,
-        center: screenPoint(b.x, b.y),
-        radius: tile * radiusTiles,
-        boundary: traceProjectileLight(b.x, b.y, radiusTiles),
-        color: b.color || '#ffb45c'
-      };
-    });
+  function lightSprite(color, kind = 'glow') {
+    const key = `${color}:${kind}`;
+    if (lightSprites.has(key)) return lightSprites.get(key);
+    const sprite = document.createElement('canvas'); sprite.width = sprite.height = 128;
+    const target = sprite.getContext('2d'), gradient = target.createRadialGradient(64, 64, 0, 64, 64, 64);
+    const stops = kind === 'cut' ? [[0, 1], [.24, .94], [.56, .62], [.82, .23], [1, 0]] : [[0, .62], [.16, .4], [.48, .15], [1, 0]];
+    for (const [position, alpha] of stops) gradient.addColorStop(position, colorWithAlpha(color, alpha));
+    target.fillStyle = gradient; target.fillRect(0, 0, 128, 128); lightSprites.set(key, sprite);
+    return sprite;
   }
 
-  function drawProjectileGlows(time) {
-    for (const light of projectileLights) {
-      const { center: p, radius, boundary, color } = light;
-      if (p.x < -radius || p.y < -radius || p.x > viewWidth + radius || p.y > viewHeight + radius) continue;
-      ctx.save();
-      tracePath(ctx, boundary); ctx.clip();
-      ctx.globalCompositeOperation = 'screen';
-      const pulse = .92 + Math.sin(time * .06 + p.x) * .08;
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
-      glow.addColorStop(0, colorWithAlpha(color, .64 * pulse));
-      glow.addColorStop(.16, colorWithAlpha(color, .36 * pulse));
-      glow.addColorStop(.48, colorWithAlpha(color, .13));
-      glow.addColorStop(1, colorWithAlpha(color, 0));
-      ctx.fillStyle = glow;
-      ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
-      ctx.restore();
+  function paintLight(target, light, kind, alpha = 1) {
+    const p = light.center, radius = light.radius;
+    target.save(); tracePath(target, light.boundary); target.clip(); target.globalAlpha = alpha;
+    target.drawImage(lightSprite(kind === 'cut' ? '#000000' : light.color, kind), p.x - radius, p.y - radius, radius * 2, radius * 2);
+    target.restore();
+  }
+
+  function prepareProjectileLights(time) {
+    projectileLights = [];
+    const limit = activeQuality === 'low' ? 4 : 8;
+    for (const list of [hostileBullets, bullets]) for (const b of list) {
+      if (projectileLights.length >= limit) break;
+      const radiusTiles = b.size > .06 ? 1.75 : 1.52, radius = tile * radiusTiles;
+      const center = screenPoint(b.x, b.y);
+      if (center.x < -radius || center.y < -radius || center.x > viewWidth + radius || center.y > viewHeight + radius) continue;
+      // Several shotgun pellets share one small light pool.
+      if (projectileLights.some(light => Math.abs(light.worldX - b.x) + Math.abs(light.worldY - b.y) < .55)) continue;
+      let cached = projectileCache.get(b);
+      if (!cached || cached.revision !== doorRevision || time - cached.time > 40 || Math.hypot(cached.x - b.x, cached.y - b.y) > .25) {
+        cached = { x: b.x, y: b.y, time, revision: doorRevision, boundary: traceProjectileLight(b.x, b.y, radiusTiles, 20) };
+        projectileCache.set(b, cached);
+      }
+      projectileLights.push({ worldX: b.x, worldY: b.y, center, radius, boundary: cached.boundary, color: b.color || '#ffb45c' });
     }
   }
 
+  function prepareTorchLight(time) {
+    let worldX = player.x + Math.cos(player.angle) * .34, worldY = player.y + Math.sin(player.angle) * .34;
+    if (!isOpenWorldCell(worldX, worldY)) { worldX = player.x; worldY = player.y; }
+    if (!torchLight || ((time - lastTorchTrace > (activeQuality === 'low' ? 50 : 30)) && Math.hypot(torchLight.worldX - worldX, torchLight.worldY - worldY) > .018)) {
+      torchLight = { worldX, worldY, color: '#ffb968', radiusTiles: 6.15, boundary: traceProjectileLight(worldX, worldY, 6.15, activeQuality === 'low' ? 64 : 96) };
+      lastTorchTrace = time;
+    }
+    torchLight.center = screenPoint(torchLight.worldX, torchLight.worldY);
+    torchLight.radius = tile * torchLight.radiusTiles;
+  }
+
+  function drawProjectileGlows(time) {
+    ctx.save(); ctx.globalCompositeOperation = 'screen';
+    for (const light of projectileLights) paintLight(ctx, light, 'glow', .8);
+    ctx.restore();
+  }
+
+  function drawFlame(x, y, size, phase, time) {
+    if (!flameFrames.length) {
+      for (let frame = 0; frame < 8; frame++) {
+        const sprite = document.createElement('canvas'); sprite.width = 48; sprite.height = 64;
+        const target = sprite.getContext('2d'), sway = Math.sin(frame * Math.PI / 4) * 4;
+        const halo = target.createRadialGradient(24, 39, 0, 24, 39, 25);
+        halo.addColorStop(0, 'rgba(255,139,43,.38)'); halo.addColorStop(1, 'rgba(255,83,12,0)');
+        target.fillStyle = halo; target.fillRect(0, 0, 48, 64);
+        const layers = [
+          { color: '#c74d20', points: [[24,53],[12,44],[14,30],[20,34],[23+sway,9],[30,29],[35,22],[37,40],[31,51]] },
+          { color: '#ff9c30', points: [[24,51],[17,43],[20,32],[23,36],[27+sway*.6,20],[31,37],[32,44],[28,50]] },
+          { color: '#fff0ae', points: [[24,49],[21,43],[24,32],[28,42],[28,47]] }
+        ];
+        for (const layer of layers) {
+          target.fillStyle = layer.color; target.beginPath();
+          layer.points.forEach(([px, py], i) => i ? target.lineTo(px, py) : target.moveTo(px, py)); target.closePath(); target.fill();
+        }
+        flameFrames.push(sprite);
+      }
+    }
+    const frame = reducedMotion ? 2 : (Math.floor(time * .016 + phase * 5) % 8 + 8) % 8;
+    ctx.drawImage(flameFrames[frame], x - size * .5, y - size * 1.1, size, size * 1.33);
+  }
+
+  function drawFireEmbers(time) {
+    if (reducedMotion) return;
+    const sources = [{ worldX: player.x + Math.cos(player.angle) * .47, worldY: player.y + Math.sin(player.angle) * .47, phase: 0 }];
+    if (activeQuality === 'high') for (const light of ambientLights) if (light.deco.type === 'lantern' || light.deco.type === 'chapel-candle') sources.push({ ...light, phase: light.deco.phase });
+    for (const source of sources) for (let i = 0; i < 3; i++) {
+      const age = ((time * .00055 + source.phase + i / 3) % 1 + 1) % 1;
+      const p = screenPoint(source.worldX, source.worldY);
+      ctx.globalAlpha = (1 - age) * .75; ctx.fillStyle = i === 0 ? '#fff0a4' : '#ef9e49';
+      ctx.fillRect(Math.round(p.x + Math.sin(age * 5 + i) * tile * .14), Math.round(p.y - tile * (.15 + age * .72)), Math.max(1, tile * .035), Math.max(1, tile * .055));
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawBackground(time) {
-    ctx.clearRect(0, 0, viewWidth, viewHeight);
     ctx.fillStyle = '#020302'; ctx.fillRect(0, 0, viewWidth, viewHeight);
-    for (let i = 0; i < 42; i++) {
+    for (let i = 0; i < (activeQuality === 'low' ? 12 : 24); i++) {
       const x = noiseAt(i, 3) * viewWidth;
-      const y = (noiseAt(i, 9) * viewHeight + (time * .004 * (1 + (i % 3))) % viewHeight) % viewHeight;
+      const y = (noiseAt(i, 9) * viewHeight + ((reducedMotion ? 0 : time) * .004 * (1 + (i % 3))) % viewHeight) % viewHeight;
       ctx.fillStyle = i % 4 === 0 ? 'rgba(216,139,68,.24)' : 'rgba(156,135,111,.10)';
       ctx.fillRect(Math.floor(x), Math.floor(y), i % 5 === 0 ? 2 : 1, 1);
     }
@@ -287,7 +421,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     // Dark mortar plus irregular inset stone blocks gives the floor a real cobblestone read.
     ctx.fillStyle = '#191b18';
     ctx.fillRect(px, py, tile, tile);
-    const palette = ['#383b35', '#40433c', '#30332e', '#484a43', '#343831', '#3b3e38'];
+    const palette = ['#41443a', '#474a3f', '#353a33', '#4d5045', '#393f34', '#42463c'];
     for (let sy = 0; sy < 2; sy++) {
       for (let sx = 0; sx < 2; sx++) {
         const v = noiseAt(x * 2 + sx, y * 2 + sy, 71);
@@ -359,7 +493,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
       ctx.fillStyle = 'rgba(24,76,91,.30)';
       ctx.fillRect(px + 1, py + 1, tile - 2, tile - 2);
       const ripple = noiseAt(x, y, 63);
-      if (ripple > .48) {
+      if (ripple > .48 && !bakingStatic) {
         const drift = Math.sin(time * .0012 + x * .9 + y * .5) * tile * .025;
         ctx.strokeStyle = `rgba(117,190,193,${.16 + ripple * .13})`;
         ctx.lineWidth = Math.max(1, tile * .025);
@@ -382,7 +516,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     } else if (theme === 4) {
       ctx.fillStyle = 'rgba(21,75,44,.26)'; ctx.fillRect(px + 1, py + 1, tile - 2, tile - 2);
       const glow = noiseAt(x, y, 67);
-      if (glow > .72) {
+      if (glow > .72 && !bakingStatic) {
         ctx.save();
         ctx.globalAlpha = .30 + Math.sin(time*.002 + glow*7)*.10;
         ctx.shadowColor = '#54d99a'; ctx.shadowBlur = tile*.15;
@@ -408,10 +542,10 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
   function drawWallTile(px, py, x, y, time = 0, theme = 0) {
     const n = noiseAt(x, y, 5), gap = Math.max(1, Math.floor(tile * .055));
     ctx.fillStyle = '#10110f'; ctx.fillRect(px, py, tile, tile);
-    const wallTone = n > .6 ? '#65665e' : n > .3 ? '#51534b' : '#42443d';
+    const wallTone = theme === 2 ? (n > .5 ? '#71837c' : '#566961') : theme === 3 ? (n > .5 ? '#93816a' : '#736853') : theme === 4 ? (n > .5 ? '#77866a' : '#52634b') : n > .6 ? '#8a8b78' : n > .3 ? '#717763' : '#5d6656';
     ctx.fillStyle = wallTone;
     ctx.fillRect(px + gap, py + gap, tile - gap * 2, tile - gap * 2);
-    ctx.fillStyle = 'rgba(224,222,201,.20)';
+    ctx.fillStyle = 'rgba(246,241,204,.31)';
     ctx.fillRect(px + gap, py + gap, tile - gap * 2, Math.max(1, tile * .09));
     ctx.fillRect(px + gap, py + gap, Math.max(1, tile * .07), tile - gap * 2);
     ctx.fillStyle = 'rgba(0,0,0,.43)'; ctx.fillRect(px + gap, py + tile * .52, tile - gap * 2, Math.max(1, tile * .065));
@@ -445,7 +579,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     }
 
     // Swaying hanging roots and dangling vines give walls a little movement.
-    if (noiseAt(x, y, 24) > .81) {
+    if (!bakingStatic && noiseAt(x, y, 24) > .81) {
       const sway = Math.sin(time * .0016 + x * .75 + y * .33) * tile * .035;
       ctx.strokeStyle = '#244e35'; ctx.lineWidth = Math.max(1, tile * .045); ctx.lineCap = 'square';
       ctx.beginPath();
@@ -482,7 +616,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
       }
     } else if (theme === 4) {
       const growth = noiseAt(x,y,86);
-      if (growth > .28) {
+      if (growth > .28 && !bakingStatic) {
         const pulse = .62 + Math.sin(time*.002 + x + y)*.18;
         ctx.save(); ctx.globalAlpha = pulse;
         ctx.shadowColor = '#42c982'; ctx.shadowBlur = tile*.13;
@@ -495,16 +629,74 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
 
     ctx.fillStyle = 'rgba(0,0,0,.52)';
     ctx.fillRect(px, py + tile - gap, tile, gap); ctx.fillRect(px + tile - gap, py, gap, tile);
+    // A deeper front face and exposed lower edge distinguish walls from paving.
+    ctx.fillStyle = 'rgba(6,12,9,.44)'; ctx.fillRect(px + gap, py + tile * .76, tile - gap * 2, tile * .19);
+    if (maze[y + 1]?.[x] !== 1 && y + 1 < rows) {
+      ctx.fillStyle = '#b0ad8d'; ctx.fillRect(px + gap, py + tile * .75, tile - gap * 2, Math.max(1, tile * .055));
+      ctx.fillStyle = 'rgba(0,0,0,.76)'; ctx.fillRect(px, py + tile * .94, tile, tile * .06);
+    }
+  }
+
+  function getChunk(chunkX, chunkY) {
+    const key = chunkY * Math.ceil(cols / chunkTiles) + chunkX;
+    let chunk = chunks.get(key);
+    if (chunk) { chunks.delete(key); chunks.set(key, chunk); return chunk; }
+    const size = chunkTiles * tile, pixels = Math.ceil(size * cacheScale);
+    while (cachePixels + pixels * pixels > maxCachePixels && chunks.size) {
+      const oldestKey = chunks.keys().next().value, oldest = chunks.get(oldestKey);
+      cachePixels -= oldest.canvas.width * oldest.canvas.height;
+      oldest.canvas.width = oldest.canvas.height = 0; chunks.delete(oldestKey);
+    }
+    const buffer = document.createElement('canvas'); buffer.width = buffer.height = pixels;
+    const target = buffer.getContext('2d'); target.setTransform(cacheScale, 0, 0, cacheScale, 0, 0); target.imageSmoothingEnabled = false;
+    ctx = target; bakingStatic = true;
+    try {
+      const startX = chunkX * chunkTiles, startY = chunkY * chunkTiles;
+      for (let y = startY; y < Math.min(rows, startY + chunkTiles); y++) for (let x = startX; x < Math.min(cols, startX + chunkTiles); x++) {
+        const px = (x - startX) * tile, py = (y - startY) * tile;
+        if (maze[y][x] === 1) drawWallTile(px, py, x, y, 0, wallThemes[y * cols + x]);
+        else drawFloorTile(px, py, x, y, maze[y][x], 0);
+      }
+    } finally { ctx = mainCtx; bakingStatic = false; }
+    chunk = { canvas: buffer, size }; chunks.set(key, chunk); cachePixels += pixels * pixels; chunkBuilds++;
+    return chunk;
   }
 
   function drawMaze(time) {
-    const minX = clamp(Math.floor(-offsetX / tile), 0, cols - 1);
-    const maxX = clamp(Math.ceil((viewWidth - offsetX) / tile), 0, cols - 1);
-    const minY = clamp(Math.floor(-offsetY / tile), 0, rows - 1);
-    const maxY = clamp(Math.ceil((viewHeight - offsetY) / tile), 0, rows - 1);
+    const span = tile * chunkTiles;
+    const minX = clamp(Math.floor(-offsetX / span), 0, Math.ceil(cols / chunkTiles) - 1);
+    const maxX = clamp(Math.floor((viewWidth - offsetX) / span), 0, Math.ceil(cols / chunkTiles) - 1);
+    const minY = clamp(Math.floor(-offsetY / span), 0, Math.ceil(rows / chunkTiles) - 1);
+    const maxY = clamp(Math.floor((viewHeight - offsetY) / span), 0, Math.ceil(rows / chunkTiles) - 1);
     for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
-      const px = Math.floor(offsetX + x * tile), py = Math.floor(offsetY + y * tile);
-      if (maze[y][x] === 1) drawWallTile(px, py, x, y, time, themedWallAt(x, y)); else drawFloorTile(px, py, x, y, maze[y][x] >= 2 ? maze[y][x] : 0, time);
+      const chunk = getChunk(x, y);
+      ctx.drawImage(chunk.canvas, Math.floor(offsetX + x * span), Math.floor(offsetY + y * span), span, span);
+    }
+    drawAnimatedTiles(time);
+  }
+
+  function drawAnimatedTiles(time) {
+    let count = 0;
+    const limit = activeQuality === 'low' ? 36 : 110;
+    for (const item of animatedTiles) {
+      const px = offsetX + item.x * tile, py = offsetY + item.y * tile;
+      if (px < -tile || py < -tile || px > viewWidth || py > viewHeight) continue;
+      if (++count > limit) break;
+      const wave = reducedMotion ? 0 : Math.sin(time * .0017 + item.phase);
+      if (item.vine) {
+        const sway = wave * tile * .035;
+        ctx.strokeStyle = '#366445'; ctx.lineWidth = Math.max(1, tile * .045);
+        ctx.beginPath(); ctx.moveTo(px + tile * .27, py + tile * .06);
+        ctx.lineTo(px + tile * .29 + sway, py + tile * .30); ctx.lineTo(px + tile * .24 + sway * 1.5, py + tile * .47); ctx.stroke();
+        ctx.fillStyle = '#78a36b'; ctx.fillRect(px + tile * .19 + sway * 1.5, py + tile * .43, tile * .09, Math.max(1, tile * .04));
+      }
+      if (!item.wall && item.theme === 2) {
+        ctx.strokeStyle = `rgba(119,205,211,${.22 + wave * .07})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(px + tile * (.46 + wave * .025), py + tile * .58, tile * .24, tile * .08, -.1, 0, Math.PI * 2); ctx.stroke();
+      } else if (item.theme === 4) {
+        ctx.globalAlpha = .6 + wave * .2; ctx.fillStyle = '#8ddd9b';
+        ctx.fillRect(px + tile * .28, py + tile * .67, Math.max(1, tile * .065), Math.max(1, tile * .04)); ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -586,14 +778,11 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
           break;
         }
         case 'chapel-candle': {
-          const flicker = .80 + Math.sin(time*.018 + deco.phase)*.20;
           ctx.fillStyle = 'rgba(0,0,0,.42)'; ctx.fillRect(-t*.22,t*.17,t*.44,t*.07);
           ctx.fillStyle = '#716148'; ctx.fillRect(-t*.19,t*.08,t*.38,t*.08);
           ctx.fillStyle = '#c3b58e'; ctx.fillRect(-t*.09,-t*.20,t*.18,t*.29);
           ctx.fillStyle = '#6a5036'; ctx.fillRect(-t*.035,-t*.23,t*.07,t*.06);
-          ctx.save(); ctx.globalAlpha = flicker; ctx.shadowColor = '#ffb34f'; ctx.shadowBlur = t*.28;
-          ctx.fillStyle = '#f39a36'; ctx.fillRect(-t*.055,-t*.34,t*.11,t*.13);
-          ctx.fillStyle = '#fff0b0'; ctx.fillRect(-t*.025,-t*.30,t*.05,t*.07); ctx.restore();
+          drawFlame(0, -t*.21, t*.55, deco.phase, time);
           break;
         }
         case 'glow-spores': {
@@ -665,14 +854,12 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
           break;
         }
         case 'lantern': {
-          const flicker = .85 + Math.sin(time * .017 + deco.phase) * .15;
           ctx.fillStyle = 'rgba(0,0,0,.42)'; ctx.fillRect(-t*.20, t*.15, t*.44, t*.09);
           ctx.fillStyle = '#30271b'; ctx.fillRect(-t*.12, -t*.22, t*.25, t*.36);
           ctx.fillStyle = '#987648'; ctx.fillRect(-t*.15, -t*.25, t*.31, t*.045);
           ctx.fillRect(-t*.15, t*.10, t*.31, t*.045);
           ctx.fillStyle = '#9a612d'; ctx.fillRect(-t*.10, -t*.17, t*.21, t*.22);
-          ctx.fillStyle = `rgba(255,142,55,${flicker})`; ctx.fillRect(-t*.07, -t*.13, t*.15, t*.14);
-          ctx.fillStyle = '#ffe29a'; ctx.fillRect(-t*.025, -t*.11, t*.06, t*.095);
+          drawFlame(0, t*.01, t*.54, deco.phase, time);
           ctx.fillStyle = '#34281a'; ctx.fillRect(-t*.18, -t*.29, t*.36, t*.045);
           break;
         }
@@ -804,9 +991,14 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     const mapW=cols*scale,mapH=rows*scale,x0=viewWidth-mapW-20,y0=18;
     ctx.save();ctx.fillStyle='rgba(4,8,6,.86)';ctx.fillRect(x0-8,y0-8,mapW+16,mapH+29);ctx.strokeStyle='rgba(167,190,138,.5)';ctx.lineWidth=1;ctx.strokeRect(x0-8,y0-8,mapW+16,mapH+29);
     ctx.font='9px monospace';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#cdd8b8';ctx.fillText('MAPA · M',x0,y0-1);
-    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
-      const v=maze[y][x];ctx.fillStyle=v===1?'#313832':v===2?'#355b60':v===3?'#63503f':v===4?'#314d3a':'#17221a';ctx.fillRect(x0+x*scale,y0+12+y*scale,Math.ceil(scale),Math.ceil(scale));
+    if (!miniMapCache) {
+      miniMapCache = document.createElement('canvas'); miniMapCache.width = Math.ceil(mapW); miniMapCache.height = Math.ceil(mapH);
+      const target = miniMapCache.getContext('2d');
+      for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+        const v=maze[y][x];target.fillStyle=v===1?'#313832':v===2?'#355b60':v===3?'#63503f':v===4?'#314d3a':'#17221a';target.fillRect(x*scale,y*scale,Math.ceil(scale),Math.ceil(scale));
+      }
     }
+    ctx.drawImage(miniMapCache,x0,y0+12);
     for(const door of secretDoors){if(!door.opened&&!door.revealed)continue;ctx.fillStyle=door.opened?'#71956d':'#cfb77a';ctx.fillRect(x0+door.x*scale,y0+12+door.y*scale,Math.max(2,scale*1.3),Math.max(2,scale*1.3));}
     for(const item of lootPickups)if(!item.taken&&(!item.secret||secretDoors.some(door=>door.id===item.secretId&&door.opened))){ctx.fillStyle=item.type==='key'?'#f6d578':item.type==='health'?'#e46d62':'#d9b16e';ctx.fillRect(x0+(item.x+.25)*scale,y0+12+(item.y+.25)*scale,Math.max(2,scale*1.5),Math.max(2,scale*1.5));}
     for(const e of enemies)if(e.alive){ctx.fillStyle=e.boss?'#ff704f':e.ranged?'#9ee1c1':'#d18d72';ctx.fillRect(x0+e.x*scale-1,y0+12+e.y*scale-1,Math.max(2,scale*1.5),Math.max(2,scale*1.5));}
@@ -820,7 +1012,7 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
 
   function drawPlayer(time) {
     const p = screenPoint(player.x, player.y), cx = p.x, cy = p.y, s = tile / 22;
-    const bob = player.moving ? Math.sin(time * .028) * .5 : Math.sin(time * .009) * .18;
+    const bob = reducedMotion ? 0 : player.moving ? Math.sin(time * .028) * .5 : Math.sin(time * .009) * .18;
     ctx.save(); ctx.translate(Math.round(cx), Math.round(cy + bob*s));
     ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.beginPath(); ctx.ellipse(0, tile*.21, tile*.25, tile*.11, 0, 0, Math.PI*2); ctx.fill();
     pixelRect(-5,1,10,12,'#211912',s); pixelRect(-6,3,12,8,'#35271b',s);
@@ -832,14 +1024,15 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     ctx.restore();
     ctx.save(); ctx.translate(cx + Math.cos(player.angle)*tile*.22, cy + Math.sin(player.angle)*tile*.22); ctx.rotate(player.angle);
     ctx.fillStyle = '#7b4727'; ctx.fillRect(0, -tile*.035, tile*.28, tile*.07);
-    ctx.shadowColor = '#ff842c'; ctx.shadowBlur = tile*.38; ctx.fillStyle = '#e76024'; ctx.fillRect(tile*.21,-tile*.09,tile*.12,tile*.18);
-    ctx.fillStyle = '#ffe18c'; ctx.fillRect(tile*.245,-tile*.055,tile*.055,tile*.11);
-    ctx.fillStyle = '#fff0ba'; ctx.fillRect(tile*.275,-tile*.025,tile*.025,tile*.05); ctx.restore();
+    ctx.fillStyle = '#c39457'; ctx.fillRect(tile*.21,-tile*.07,tile*.10,tile*.14); ctx.restore();
+    drawFlame(cx + Math.cos(player.angle)*tile*.49, cy + Math.sin(player.angle)*tile*.49, tile*.83, .3, time);
   }
 
   function drawSkeleton(enemy, time) {
     const p = screenPoint(enemy.x, enemy.y), x = p.x, y = p.y, s = tile / 18;
     if (x < -tile || y < -tile || x > viewWidth + tile || y > viewHeight + tile) return;
+    drawEnemyTelegraph(enemy, x, y);
+    if (enemy.type === 'wraith' || enemy.type === 'emberling') { drawRegionalEnemy(enemy, x, y, time); return; }
     const stride = Math.sin(enemy.stepPhase) * 1.2;
     const attacking = enemy.attackAnim > 0;
     const attackDuration = enemy.boss ? .78 : enemy.ranged ? .42 : .52;
@@ -891,68 +1084,109 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
     if (enemy.boss) { const barW=tile*1.35, barY=y-tile*.70;ctx.save();ctx.fillStyle='rgba(0,0,0,.82)';ctx.fillRect(x-barW/2,barY,barW,Math.max(3,tile*.10));ctx.fillStyle='#9b3429';ctx.fillRect(x-barW/2,barY,barW*clamp(enemy.hp/Math.max(1,enemy.maxHp),0,1),Math.max(3,tile*.10));ctx.strokeStyle='rgba(232,182,135,.8)';ctx.strokeRect(x-barW/2,barY,barW,Math.max(3,tile*.10));ctx.restore(); }
   }
 
+  function drawEnemyTelegraph(enemy, x, y) {
+    if (!(enemy.attackAnim > 0 || enemy.charge > 0)) return;
+    const progress = 1 - clamp(enemy.attackAnim / (enemy.attackMax || (enemy.boss ? .78 : .52)), 0, 1);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(enemy.charge > 0 ? (enemy.chargeAngle ?? enemy.angle) : enemy.angle);
+    ctx.fillStyle = enemy.type === 'wraith' ? '#85d4d8' : enemy.type === 'emberling' ? '#ffac54' : '#d35737';
+    ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = Math.max(1, tile * .035); ctx.globalAlpha = .12 + progress * .19;
+    if (enemy.type === 'wraith') {
+      ctx.fillRect(0, -tile * .25, tile * 2.5, tile * .5); ctx.strokeRect(0, -tile * .25, tile * 2.5, tile * .5);
+    } else {
+      const length = tile * (enemy.type === 'emberling' ? 2.5 : .95), spread = enemy.type === 'emberling' ? .34 : .65;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, length, -spread, spread); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawRegionalEnemy(enemy, x, y, time) {
+    const t = tile, flash = enemy.flash > 0;
+    ctx.save(); ctx.translate(Math.round(x), Math.round(y));
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.beginPath(); ctx.ellipse(0, t*.22, t*.31, t*.12, 0, 0, Math.PI*2); ctx.fill();
+    if (enemy.type === 'wraith') {
+      const sway = reducedMotion ? 0 : Math.sin(time*.004 + enemy.x) * t*.055;
+      ctx.fillStyle = flash ? '#f3ffff' : '#416d76';
+      ctx.beginPath(); ctx.moveTo(-t*.24, -t*.21); ctx.lineTo(-t*.3, t*.3); ctx.lineTo(-t*.13+sway, t*.18); ctx.lineTo(sway, t*.36); ctx.lineTo(t*.14+sway, t*.16); ctx.lineTo(t*.29, t*.29); ctx.lineTo(t*.2, -t*.24); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = flash ? '#ffffff' : '#a3d3cf'; ctx.fillRect(-t*.15, -t*.37, t*.30, t*.22);
+      ctx.fillStyle = '#172f36'; ctx.fillRect(-t*.12, -t*.29, t*.24, t*.07);
+      ctx.fillStyle = '#defff2'; ctx.fillRect(-t*.095, -t*.28, t*.04, t*.035); ctx.fillRect(t*.055, -t*.28, t*.04, t*.035);
+      ctx.strokeStyle = '#7faeb0'; ctx.lineWidth = Math.max(1, t*.055); ctx.beginPath(); ctx.moveTo(-t*.22, -t*.10); ctx.lineTo(-t*.37, t*.12+sway); ctx.moveTo(t*.2, -t*.10); ctx.lineTo(t*.35, t*.10-sway); ctx.stroke();
+    } else {
+      ctx.fillStyle = flash ? '#ffe8b6' : '#664637'; ctx.fillRect(-t*.24, -t*.22, t*.48, t*.45);
+      ctx.fillStyle = '#302d25'; ctx.fillRect(-t*.28, t*.13, t*.19, t*.16); ctx.fillRect(t*.09, t*.13, t*.19, t*.16);
+      ctx.fillStyle = '#a96038'; ctx.fillRect(-t*.32, -t*.11, t*.14, t*.28); ctx.fillRect(t*.18, -t*.11, t*.14, t*.28);
+      ctx.fillStyle = '#f8b15b'; ctx.fillRect(-t*.13, -t*.18, t*.06, t*.24); ctx.fillRect(t*.07, -t*.1, t*.06, t*.22);
+      ctx.fillStyle = '#e5ad68'; ctx.fillRect(-t*.17, -t*.34, t*.34, t*.22);
+      ctx.fillStyle = '#3a261e'; ctx.fillRect(-t*.14, -t*.27, t*.28, t*.065);
+      ctx.fillStyle = '#ffe6a0'; ctx.fillRect(-t*.105, -t*.26, t*.055, t*.035); ctx.fillRect(t*.05, -t*.26, t*.055, t*.035);
+      drawFlame(0, -t*.27, t*.62, enemy.x + enemy.y, time);
+    }
+    ctx.restore();
+  }
+
   function drawBullets() {
-    for (const b of [...bullets, ...hostileBullets]) {
+    for (const list of [bullets, hostileBullets]) for (const b of list) {
       const p = screenPoint(b.x,b.y), tail = screenPoint(b.x - b.vx*.018,b.y - b.vy*.018);
+      if (p.x < -tile || p.y < -tile || p.x > viewWidth + tile || p.y > viewHeight + tile) continue;
       ctx.save(); ctx.strokeStyle = b.color; ctx.lineWidth = Math.max(1.3,tile*(b.damage ? .075 : .055)); ctx.globalAlpha = .9;
-      ctx.shadowColor = b.color; ctx.shadowBlur = tile*.22; ctx.beginPath(); ctx.moveTo(tail.x,tail.y); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.restore();
+      ctx.beginPath(); ctx.moveTo(tail.x,tail.y); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.restore();
     }
   }
 
   function drawParticles() {
+    let count = 0;
     for (const p of particles) {
-      const q = screenPoint(p.x,p.y); ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+      const q = screenPoint(p.x,p.y);
+      if (q.x < -tile || q.y < -tile || q.x > viewWidth + tile || q.y > viewHeight + tile) continue;
+      if (++count > (activeQuality === 'low' ? 70 : 180)) break;
+      ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
       ctx.fillStyle = p.color; ctx.fillRect(q.x - p.size*tile*.5,q.y - p.size*tile*.5,Math.max(1,p.size*tile),Math.max(1,p.size*tile));
     }
     ctx.globalAlpha = 1;
   }
 
   function drawTorchGlow(time) {
-    const pos = screenPoint(player.x, player.y), dx = pos.x + Math.cos(player.angle)*tile*.42, dy = pos.y + Math.sin(player.angle)*tile*.42;
-    const flicker = Math.sin(time*.023)*tile*.04 + Math.sin(time*.039)*tile*.025, radius = tile*6.0 + flicker;
-    const glow = ctx.createRadialGradient(dx,dy,tile*.08,dx,dy,radius);
-    glow.addColorStop(0,'rgba(255,177,86,.29)'); glow.addColorStop(.23,'rgba(238,119,37,.18)'); glow.addColorStop(.57,'rgba(153,61,22,.075)'); glow.addColorStop(1,'rgba(58,20,8,0)');
-    ctx.fillStyle = glow; ctx.fillRect(0,0,viewWidth,viewHeight);
+    if (!torchLight) return;
+    ctx.save(); ctx.globalCompositeOperation = 'screen';
+    const flicker = reducedMotion ? 1 : .95 + Math.sin(time * .019) * .035 + Math.sin(time * .033) * .015;
+    paintLight(ctx, torchLight, 'glow', .43 * flicker + Math.min(.08, combatPulse * .08));
+    ctx.restore();
   }
 
-  function prepareAmbientLights() {
-    const candidates = [];
-    for (const deco of decorations) {
-      if (!['lantern', 'fungus', 'fungus-heart', 'chapel-candle'].includes(deco.type)) continue;
-      const worldX = deco.x + .5, worldY = deco.y + .5;
-      const center = screenPoint(worldX, worldY);
-      const radiusTiles = deco.type === 'lantern' ? 2.9 : deco.type === 'fungus-heart' ? 3.25 : deco.type === 'chapel-candle' ? 1.6 : 2.15;
-      const radius = tile * radiusTiles;
-      if (center.x < -radius || center.y < -radius || center.x > viewWidth + radius || center.y > viewHeight + radius) continue;
-      const distance = Math.hypot(worldX - player.x, worldY - player.y);
-      candidates.push({ deco, worldX, worldY, center, radius, radiusTiles, distance,
-        color: deco.type === 'lantern' || deco.type === 'chapel-candle' ? '#ffad59' : '#62e1a4', power: deco.type === 'lantern' ? .78 : deco.type === 'fungus-heart' ? .82 : deco.type === 'chapel-candle' ? .52 : .59 });
+  function prepareAmbientLights(time) {
+    if (time >= nextAmbientSelection || !nextAmbientSelection) {
+      const candidates = [];
+      for (const light of staticLights) {
+        const center = screenPoint(light.worldX, light.worldY), radius = tile * light.radiusTiles;
+        if (center.x < -radius || center.y < -radius || center.x > viewWidth + radius || center.y > viewHeight + radius) continue;
+        light.distance = (light.worldX - player.x) ** 2 + (light.worldY - player.y) ** 2;
+        candidates.push(light);
+      }
+      candidates.sort((a, b) => a.distance - b.distance);
+      ambientLights = candidates.slice(0, activeQuality === 'low' ? 4 : 8);
+      nextAmbientSelection = time + 220;
     }
-    candidates.sort((a, b) => a.distance - b.distance);
-    ambientLights = candidates.slice(0, 13).map(light => ({
-      ...light,
-      boundary: traceProjectileLight(light.worldX, light.worldY, light.radiusTiles, 22)
-    }));
+    for (const light of ambientLights) {
+      light.center = screenPoint(light.worldX, light.worldY); light.radius = tile * light.radiusTiles;
+      if (light.revision !== doorRevision) {
+        light.boundary = traceProjectileLight(light.worldX, light.worldY, light.radiusTiles, 40);
+        light.revision = doorRevision;
+      }
+    }
   }
 
   function drawAmbientGlows(time) {
+    ctx.save(); ctx.globalCompositeOperation = 'screen';
     for (const light of ambientLights) {
-      const { center: p, radius, color, deco } = light;
-      const pulse = .88 + Math.sin(time * ((deco.type === 'lantern' || deco.type === 'chapel-candle') ? .014 : .003) + deco.phase) * .12;
-      ctx.save(); ctx.globalCompositeOperation = 'screen';
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
-      glow.addColorStop(0, colorWithAlpha(color, ((deco.type === 'lantern' || deco.type === 'chapel-candle') ? .34 : deco.type === 'fungus-heart' ? .42 : .27) * pulse));
-      glow.addColorStop(.25, colorWithAlpha(color, ((deco.type === 'lantern' || deco.type === 'chapel-candle') ? .19 : deco.type === 'fungus-heart' ? .24 : .15) * pulse));
-      glow.addColorStop(.62, colorWithAlpha(color, .045 * pulse));
-      glow.addColorStop(1, colorWithAlpha(color, 0));
-      ctx.fillStyle = glow; ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
-      ctx.restore();
+      const pulse = reducedMotion ? 1 : .9 + Math.sin(time * (light.deco.type === 'lantern' || light.deco.type === 'chapel-candle' ? .014 : .003) + light.deco.phase) * .1;
+      paintLight(ctx, light, 'glow', .6 * pulse);
     }
+    ctx.restore();
   }
 
   function drawAtmosphericMotes(time) {
     // Tiny spores drift only through illuminated open space, so they add movement without becoming UI noise.
-    for (let i = 0; i < (reducedMotion ? 10 : 34); i++) {
+    for (let i = 0; i < (reducedMotion ? 6 : activeQuality === 'low' ? 10 : 24); i++) {
       const wx = (noiseAt(i, 161, 7) * cols + time * (.000012 + (i % 4) * .000005)) % cols;
       const wy = (noiseAt(i, 163, 9) * rows + Math.sin(time * .0007 + i * 1.9) * .17 + rows) % rows;
       if (!isOpenWorldCell(wx, wy)) continue;
@@ -960,69 +1194,55 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
       const nearLight = ambientLights.some(light => Math.hypot(wx - light.worldX, wy - light.worldY) < light.radiusTiles * .9);
       if (!nearPlayer && !nearLight) continue;
       const p = screenPoint(wx, wy), pulse = .45 + .5 * Math.abs(Math.sin(time * .002 + i));
+      if (p.x < 0 || p.y < 0 || p.x > viewWidth || p.y > viewHeight) continue;
       const size = i % 7 === 0 ? Math.max(2, tile * .065) : Math.max(1, tile * .027);
       ctx.save(); ctx.globalAlpha = pulse * (nearPlayer ? .44 : .27);
       ctx.fillStyle = i % 3 === 0 ? '#92d49b' : i % 3 === 1 ? '#dbb77a' : '#8ac8bd';
-      if (i % 7 === 0) { ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = tile * .12; }
       ctx.fillRect(Math.round(p.x), Math.round(p.y), size, size); ctx.restore();
     }
   }
 
   function drawDarkness(time) {
-    const pos = screenPoint(player.x, player.y), dx = pos.x + Math.cos(player.angle)*tile*.48, dy = pos.y + Math.sin(player.angle)*tile*.48;
-    const radius = tile*(5.9 + Math.sin(time*.021)*.035);
-    darknessCtx.clearRect(0,0,darknessCanvas.width,darknessCanvas.height);
-    darknessCtx.globalCompositeOperation = 'source-over'; darknessCtx.fillStyle = 'rgba(1,1,1,.972)'; darknessCtx.fillRect(0,0,darknessCanvas.width,darknessCanvas.height);
-    darknessCtx.globalCompositeOperation = 'destination-out';
-    const cut = darknessCtx.createRadialGradient(dx,dy,tile*.2,dx,dy,radius);
-    cut.addColorStop(0,'rgba(0,0,0,1)'); cut.addColorStop(.42,'rgba(0,0,0,.99)'); cut.addColorStop(.72,'rgba(0,0,0,.78)'); cut.addColorStop(1,'rgba(0,0,0,0)');
-    darknessCtx.fillStyle = cut; darknessCtx.fillRect(0,0,viewWidth,viewHeight);
-
-    // Scattered lanterns and bioluminescent fungi create small pools of light.
-    for (const light of ambientLights) {
-      const { center: p, radius, boundary, power } = light;
-      darknessCtx.save();
-      tracePath(darknessCtx, boundary); darknessCtx.clip();
-      const envCut = darknessCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
-      envCut.addColorStop(0, `rgba(0,0,0,${power})`);
-      envCut.addColorStop(.24, `rgba(0,0,0,${power * .76})`);
-      envCut.addColorStop(.56, `rgba(0,0,0,${power * .34})`);
-      envCut.addColorStop(1, 'rgba(0,0,0,0)');
-      darknessCtx.fillStyle = envCut;
-      darknessCtx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
-      darknessCtx.restore();
-    }
-
-    // A shot is a brief moving light source. Remove darkness only inside the
-    // line-of-sight polygon, so the glow cannot leak through solid cobblestone.
-    for (const light of projectileLights) {
-      const { center: p, radius, boundary } = light;
-      if (p.x < -radius || p.y < -radius || p.x > viewWidth + radius || p.y > viewHeight + radius) continue;
-      darknessCtx.save();
-      tracePath(darknessCtx, boundary); darknessCtx.clip();
-      const bulletCut = darknessCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
-      bulletCut.addColorStop(0, 'rgba(0,0,0,.97)');
-      bulletCut.addColorStop(.25, 'rgba(0,0,0,.88)');
-      bulletCut.addColorStop(.60, 'rgba(0,0,0,.48)');
-      bulletCut.addColorStop(1, 'rgba(0,0,0,0)');
-      darknessCtx.fillStyle = bulletCut;
-      darknessCtx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
-      darknessCtx.restore();
-    }
     darknessCtx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(darknessCanvas,0,0,viewWidth,viewHeight);
+    darknessCtx.clearRect(0, 0, darknessCanvas.width, darknessCanvas.height);
+    // Brightness raises the distant ambient floor and the local visibility.
+    darknessCtx.fillStyle = `rgba(1,4,3,${.994 - brightness * .055})`;
+    darknessCtx.fillRect(0, 0, darknessCanvas.width, darknessCanvas.height);
+    darknessCtx.globalCompositeOperation = 'destination-out';
+    if (torchLight) paintLight(darknessCtx, torchLight, 'cut', .86 + brightness * .14);
+    for (const light of ambientLights) paintLight(darknessCtx, light, 'cut', light.power * (.85 + brightness * .2));
+    for (const light of projectileLights) paintLight(darknessCtx, light, 'cut', .92);
+    darknessCtx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(darknessCanvas, 0, 0, viewWidth, viewHeight);
   }
 
   function renderFrame(time) {
     drawBackground(time);
     if (!maze.length) return;
-    updateCamera(); prepareProjectileLights(); prepareAmbientLights();
-    drawMaze(time); drawDecorations(time); drawSecretDoors(time); drawMapMarks(time); drawExit(time); drawEmbers(time); drawWeaponPickups(time); drawLootPickups(time);
+    const fxTime = reducedMotion ? 0 : time;
+    updateCamera(); prepareProjectileLights(time); prepareAmbientLights(time); prepareTorchLight(time);
+    drawMaze(fxTime); drawDecorations(fxTime); drawSecretDoors(fxTime); drawMapMarks(fxTime); drawExit(fxTime); drawEmbers(fxTime); drawWeaponPickups(fxTime); drawLootPickups(fxTime);
     enemies.forEach(e => { if (e.alive) drawSkeleton(e,time); });
     drawTorchGlow(time); drawAmbientGlows(time); drawProjectileGlows(time); drawDarkness(time);
-    drawAtmosphericMotes(time); drawBullets(); drawParticles(); drawPlayer(time); drawPickupToast(time); drawObjectiveText();
+    drawAtmosphericMotes(fxTime); drawBullets(); drawParticles(); drawPlayer(fxTime); drawFireEmbers(time); drawFloatingTexts(); drawPickupToast(time); drawObjectiveText();
     if (hitFlash > 0) { ctx.fillStyle = `rgba(180,20,10,${Math.min(.19,hitFlash*.55)})`; ctx.fillRect(0,0,viewWidth,viewHeight); }
     if (showMap) drawMiniMap(time);
+  }
+
+  function drawFloatingTexts() {
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = 3; ctx.strokeStyle = '#10140f';
+    ctx.font = `bold ${Math.max(11, Math.min(16, tile * .43))}px monospace`;
+    for (let i = 0; i < Math.min(floatingTexts.length, activeQuality === 'low' ? 12 : 24); i++) {
+      const item = floatingTexts[i], p = screenPoint(item.x, item.y);
+      if (p.x < -tile || p.y < -tile || p.x > viewWidth + tile || p.y > viewHeight + tile) continue;
+      ctx.globalAlpha = clamp(item.life / Math.max(.01, item.maxLife) * 2, 0, 1); ctx.fillStyle = item.color || '#ffde91';
+      ctx.strokeText(String(item.text), p.x, p.y - tile * .45); ctx.fillText(String(item.text), p.x, p.y - tile * .45);
+    }
+    if (combatPulse > .05) {
+      const p = screenPoint(player.x, player.y); ctx.globalAlpha = Math.min(.4, combatPulse * .4); ctx.strokeStyle = '#f4c67c'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, tile * (.42 + (1 - Math.min(1, combatPulse)) * .15), 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
   }
 
 
@@ -1036,7 +1256,19 @@ export function createRenderer({ canvas, canvasWrap, getState }) {
 
   return {
     resizeCanvas() { refreshState(); renderResizeCanvas(); },
-    draw(time) { refreshState(); renderFrame(time); },
+    draw(time) {
+      const started = performance.now(); chunkBuilds = 0; lightTraces = 0;
+      refreshState();
+      if (graphicsQuality === 'auto' && frameNumber > 90) {
+        if (activeQuality === 'high' && renderAverage > 18 && time - lastQualityChange > 5000) { setQuality('low'); lastQualityChange = time; }
+        else if (activeQuality === 'low' && renderAverage < 7 && time - lastQualityChange > 15000) { setQuality('high'); lastQualityChange = time; }
+      }
+      renderFrame(time); frameNumber++;
+      const duration = performance.now() - started;
+      renderAverage = renderAverage ? renderAverage * .95 + duration * .05 : duration;
+      Object.assign(metrics, { quality: activeQuality, mode: graphicsQuality, renderMs: renderAverage, cachedChunks: chunks.size, cacheBytes: cachePixels * 4, chunkBuilds, lightTraces, ambientLights: ambientLights.length, projectileLights: projectileLights.length, renderScale: Math.min(window.devicePixelRatio || 1, activeQuality === 'low' ? 1 : 1.5) });
+    },
+    getMetrics() { return { ...metrics }; },
     pointerWorld
   };
 }
